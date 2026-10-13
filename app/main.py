@@ -47,6 +47,7 @@ OPENAPI_TAGS = [
     {"name": "Semestres", "description": "Gestión de semestres (coordinador)."},
     {"name": "Materias", "description": "Materias de cada semestre (coordinador)."},
     {"name": "Profesor", "description": "Materias del profesor autenticado y carga de notas."},
+    {"name": "Estudiante", "description": "Consulta de notas del estudiante autenticado."},
 ]
 
 

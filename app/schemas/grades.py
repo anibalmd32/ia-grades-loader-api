@@ -105,3 +105,17 @@ class ImportPreview(BaseModel):
     students_without_grades: list[StudentSummary] = Field(
         description="Matriculados que no aparecen en el archivo"
     )
+
+
+class StudentSubjectGrades(BaseModel):
+    subject: SubjectRead
+    teachers: list[str] = Field(description="Profesores que imparten la materia")
+    grades: list[TermGrade] = Field(description="Siempre un elemento por lapso, en orden")
+    average: GradeNumber | None = Field(description="Promedio de las notas cargadas")
+
+
+class StudentOverview(BaseModel):
+    subjects: list[StudentSubjectGrades]
+    average: GradeNumber | None = Field(
+        description="Promedio general: media de los promedios de las materias con notas"
+    )
