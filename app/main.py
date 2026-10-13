@@ -9,11 +9,18 @@ API para que los profesores carguen notas (manualmente o desde Excel con ayuda d
 y los estudiantes las consulten de forma tradicional, en lenguaje natural o por Telegram.
 
 * Notas del **1 al 20**, una por **lapso** (3 lapsos por semestre).
-* Autenticación con **JWT** (botón *Authorize* de esta página).
+* Autenticación con **JWT**. Para probar aquí usa el botón *Authorize*: en `username` escribe
+  el email (personal) o la cédula con su tipo, p. ej. `V-12345678` (estudiantes).
 """
 
 OPENAPI_TAGS = [
     {"name": "Salud", "description": "Estado del servicio."},
+    {
+        "name": "Autenticación",
+        "description": (
+            "Personal: email y contraseña. Estudiantes: tipo (V/E), cédula y contraseña."
+        ),
+    },
 ]
 
 

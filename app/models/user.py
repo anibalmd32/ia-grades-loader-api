@@ -59,6 +59,10 @@ class User(TimestampMixin, Base):
         return self.role in STAFF_ROLES
 
     @property
+    def telegram_linked(self) -> bool:
+        return self.telegram_chat_id is not None
+
+    @property
     def cedula_display(self) -> str | None:
         if self.cedula is None or self.nationality is None:
             return None
