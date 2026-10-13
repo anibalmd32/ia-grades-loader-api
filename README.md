@@ -40,6 +40,15 @@ uv run ruff format .     # formateo
 uv add <paquete>         # nueva dependencia (uv add --dev <paquete> para desarrollo)
 ```
 
+Migraciones (Alembic, leen `DATABASE_URL` del `.env`):
+
+```bash
+uv run alembic upgrade head                          # aplicar migraciones
+uv run alembic revision --autogenerate -m "mensaje"  # nueva migración a partir de los modelos
+uv run alembic check                                 # verificar que modelos y migraciones coinciden
+uv run alembic upgrade head --sql                    # ver el SQL sin ejecutarlo
+```
+
 ## Estructura
 
 ```
