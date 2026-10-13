@@ -8,6 +8,7 @@ from app.api.v1.routes import (
     semesters,
     setup,
     subjects,
+    teacher,
     users,
 )
 
@@ -22,3 +23,4 @@ api_router.include_router(semesters.router)
 api_router.include_router(subjects.router)
 api_router.include_router(assignments.router)
 api_router.include_router(enrollments.router)
+api_router.include_router(teacher.router)
