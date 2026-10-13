@@ -1,3 +1,6 @@
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -47,10 +50,27 @@ OPENAPI_TAGS = [
 ]
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+    worker = None
+    if get_settings().import_worker_embedded:
+        from app.db.session import SessionLocal
+        from app.worker import ImportWorker
+
+        worker = ImportWorker(SessionLocal)
+        await worker.start()
+    try:
+        yield
+    finally:
+        if worker is not None:
+            await worker.stop()
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
 
     app = FastAPI(
+        lifespan=lifespan,
         title=settings.app_name,
         description=DESCRIPTION,
         version="0.1.0",

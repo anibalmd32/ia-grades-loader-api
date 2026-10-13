@@ -2,25 +2,23 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 
-from app.ai.client import LLMClient, get_llm
 from app.api.deps import DbSession, require_roles
 from app.core.config import get_settings
 from app.models import Role, User
 from app.schemas.academic import SubjectRead
 from app.schemas.grades import (
     GradesUpdate,
-    ImportPreview,
-    ImportRow,
-    ImportSummary,
     StudentGrades,
     StudentSummary,
     SubjectGrades,
     TeacherSubject,
     TermGrade,
 )
-from app.services import grade_import, grades
+from app.schemas.import_jobs import ImportJobRead, ImportJobSummary
+from app.services import grades, import_jobs
+from app.worker import notify_new_job
 
 router = APIRouter(prefix="/teacher", tags=["Profesor"])
 
@@ -78,57 +76,56 @@ async def save_subject_grades(
 
 @router.post(
     "/subjects/{subject_id}/grades/import",
-    summary="Previsualizar notas desde un Excel (IA)",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Encolar la lectura de un Excel de notas (IA)",
 )
-async def preview_grades_import(
+async def enqueue_grades_import(
     subject_id: int,
     teacher: Teacher,
     db: DbSession,
-    llm: Annotated[LLMClient, Depends(get_llm)],
     file: Annotated[UploadFile, File(description="Planilla .xlsx de la materia")],
     default_term: Annotated[
         int | None,
         Form(ge=1, le=3, description="Lapso a usar si la planilla no lo indica"),
     ] = None,
-) -> ImportPreview:
-    """La IA lee la planilla y el servidor identifica a cada estudiante entre los
-    matriculados. **No guarda nada**: revisa las filas y envía las que quieras guardar
-    (`status` ok o warning, ya corregidas) a `PUT /teacher/subjects/{id}/grades`.
-    """
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
-    max_bytes = get_settings().max_upload_size_mb * 1024 * 1024
-    content = await file.read(max_bytes + 1)
-    if len(content) > max_bytes:
-        raise HTTPException(
-            status.HTTP_413_CONTENT_TOO_LARGE,
-            f"El archivo supera el máximo de {get_settings().max_upload_size_mb} MB",
-        )
+) -> ImportJobSummary:
+    """Responde al instante con el trabajo en cola (`status: pending`); la IA procesa el
+    archivo en segundo plano. Consulta `GET /teacher/import-jobs/{job_id}` hasta que
+    `status` sea `done` (o `failed`).
 
-    preview = await grade_import.preview_import(db, llm, subject, content, default_term)
-    rows = [
-        ImportRow(
-            sheet=r.extracted.sheet,
-            row=r.extracted.row,
-            raw_cedula=None if r.extracted.cedula is None else str(r.extracted.cedula),
-            raw_name=r.extracted.student_name,
-            raw_value=None if r.extracted.value is None else str(r.extracted.value),
-            student=StudentSummary.model_validate(r.student) if r.student else None,
-            term=r.term,
-            value=r.value,
-            current_value=r.current_value,
-            status=r.status,
-            issues=r.issues,
+    El resultado es una previsualización: **no se guarda nada**. Envía las filas que
+    quieras guardar (ok o warning, ya corregidas) a `PUT /teacher/subjects/{id}/grades`.
+    """
+    await grades.get_teacher_subject(db, teacher.id, subject_id)
+    max_mb = get_settings().max_upload_size_mb
+    content = await file.read(max_mb * 1024 * 1024 + 1)
+    if len(content) > max_mb * 1024 * 1024:
+        raise HTTPException(
+            status.HTTP_413_CONTENT_TOO_LARGE, f"El archivo supera el máximo de {max_mb} MB"
         )
-        for r in preview.rows
-    ]
-    return ImportPreview(
-        subject=SubjectRead.model_validate(subject),
-        rows=rows,
-        summary=ImportSummary(
-            **{s: sum(r.status == s for r in rows) for s in ("ok", "warning", "error")}
-        ),
-        warnings=preview.warnings,
-        students_without_grades=[
-            StudentSummary.model_validate(s) for s in preview.students_without_grades
-        ],
+    job = await import_jobs.enqueue(
+        db,
+        teacher_id=teacher.id,
+        subject_id=subject_id,
+        file_name=file.filename or "planilla.xlsx",
+        content=content,
+        default_term=default_term,
     )
+    notify_new_job()
+    return ImportJobSummary.model_validate(job)
+
+
+@router.get("/import-jobs", summary="Mis importaciones recientes")
+async def list_import_jobs(
+    teacher: Teacher,
+    db: DbSession,
+    subject_id: int | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+) -> list[ImportJobSummary]:
+    jobs = await import_jobs.list_jobs(db, teacher.id, subject_id, limit)
+    return [ImportJobSummary.model_validate(j) for j in jobs]
+
+
+@router.get("/import-jobs/{job_id}", summary="Estado y resultado de una importación")
+async def get_import_job(job_id: str, teacher: Teacher, db: DbSession) -> ImportJobRead:
+    return ImportJobRead.model_validate(await import_jobs.get_job(db, teacher.id, job_id))

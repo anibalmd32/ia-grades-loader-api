@@ -6,6 +6,7 @@ a quien no corresponde. Nada se guarda aquí: el profesor revisa la previsualiza
 confirma con el endpoint normal de carga de notas.
 """
 
+import asyncio
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -19,6 +20,8 @@ from app.ai.client import LLMClient
 from app.ai.prompts import GRADES_EXTRACTION_SYSTEM, grades_extraction_user
 from app.models import Subject, User
 from app.models.enrollment import GRADE_DECIMALS, MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
+from app.schemas.academic import SubjectRead
+from app.schemas.grades import ImportPreview, ImportRow, ImportSummary, StudentSummary
 from app.services import excel, grades
 
 Status = Literal["ok", "warning", "error"]
@@ -227,7 +230,8 @@ async def preview_import(
     content: bytes,
     default_term: int | None,
 ) -> Preview:
-    sheets = excel.read_workbook(content)
+    # Leer el Excel consume CPU: en un hilo aparte para no frenar el event loop
+    sheets = await asyncio.to_thread(excel.read_workbook, content)
     extraction = await llm.complete_json(
         GRADES_EXTRACTION_SYSTEM,
         grades_extraction_user(
@@ -249,3 +253,33 @@ async def preview_import(
     found = {row.student.id for row in rows if row.student}
     missing = [r.student for r in roster.rows if r.student.id not in found]
     return Preview(rows=rows, warnings=extraction.warnings, students_without_grades=missing)
+
+
+def to_schema(subject: Subject, preview: Preview) -> ImportPreview:
+    rows = [
+        ImportRow(
+            sheet=r.extracted.sheet,
+            row=r.extracted.row,
+            raw_cedula=None if r.extracted.cedula is None else str(r.extracted.cedula),
+            raw_name=r.extracted.student_name,
+            raw_value=None if r.extracted.value is None else str(r.extracted.value),
+            student=StudentSummary.model_validate(r.student) if r.student else None,
+            term=r.term,
+            value=r.value,
+            current_value=r.current_value,
+            status=r.status,
+            issues=r.issues,
+        )
+        for r in preview.rows
+    ]
+    return ImportPreview(
+        subject=SubjectRead.model_validate(subject),
+        rows=rows,
+        summary=ImportSummary(
+            **{s: sum(r.status == s for r in rows) for s in ("ok", "warning", "error")}
+        ),
+        warnings=preview.warnings,
+        students_without_grades=[
+            StudentSummary.model_validate(s) for s in preview.students_without_grades
+        ],
+    )

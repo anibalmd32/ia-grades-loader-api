@@ -55,6 +55,20 @@ class Settings(BaseSettings):
     # --- Carga de archivos ---
     max_upload_size_mb: int = 10
 
+    # --- Cola de importación de notas (Excel + IA) ---
+    # true: el worker corre dentro del proceso de la API. false: hay que lanzarlo aparte
+    # con `uv run python -m app.worker` (se pueden lanzar varios).
+    import_worker_embedded: bool = True
+    # Trabajos procesados en paralelo por cada worker
+    import_worker_concurrency: int = 2
+    # Cada cuánto busca trabajos nuevos un worker sin nada que hacer (segundos)
+    import_worker_poll_seconds: float = 2.0
+    # Un trabajo "processing" más viejo que esto se considera huérfano y se reintenta
+    import_job_stale_minutes: int = 10
+    import_job_max_attempts: int = 3
+    # Trabajos pendientes o en proceso que puede tener un profesor a la vez
+    import_max_pending_per_teacher: int = 5
+
     @model_validator(mode="after")
     def _check_jwt_secret(self) -> "Settings":
         secret = self.jwt_secret_key.get_secret_value()

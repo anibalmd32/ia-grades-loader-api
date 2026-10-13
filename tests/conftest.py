@@ -14,6 +14,23 @@ from app.main import app as fastapi_app
 from app.models import Nationality, Role, User
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _fast_password_hashing():
+    """Argon2 con parámetros mínimos en tests: el hash real es lento a propósito y
+    multiplicaba el tiempo de la suite. En producción se usan los recomendados."""
+    from pwdlib import PasswordHash
+    from pwdlib.hashers.argon2 import Argon2Hasher
+
+    import app.core.security as security
+
+    original = security._password_hash
+    security._password_hash = PasswordHash(
+        (Argon2Hasher(time_cost=1, memory_cost=8, parallelism=1),)
+    )
+    yield
+    security._password_hash = original
+
+
 @pytest.fixture
 async def sessionmaker() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     """SQLite en memoria con el esquema completo, compartida por todas las conexiones."""
@@ -82,3 +99,48 @@ def login_as(create_user):
         return {"Authorization": f"Bearer {token}"}
 
     return _login
+
+
+@pytest.fixture
+async def course(client, login_as, session):
+    """Materia MAT-101 con un profesor asignado y 4 estudiantes (V-1, V-2, E-2, V-3)."""
+    coord = await login_as(Role.COORDINATOR, email="coord@uni.edu")
+    semester = (await client.post("/semesters", json={"name": "2026-I"}, headers=coord)).json()
+    subject = await client.post(
+        "/subjects",
+        json={"semester_id": semester["id"], "code": "MAT-101", "name": "Matemática I"},
+        headers=coord,
+    )
+    subject_id = subject.json()["id"]
+    teacher = await client.post(
+        "/teachers", json={"full_name": "Pedro", "email": "p@uni.edu"}, headers=coord
+    )
+    teacher_id = teacher.json()["user"]["id"]
+    await client.put(
+        f"/teachers/{teacher_id}/subjects", json={"subject_ids": [subject_id]}, headers=coord
+    )
+    students = {}
+    for nationality, cedula, name in [
+        ("V", 1, "Ana Pérez"),
+        ("V", 2, "Bea Gómez"),
+        ("E", 2, "Bob Smith"),
+        ("V", 3, "Carlos Ruiz"),
+    ]:
+        response = await client.post(
+            "/students",
+            json={"full_name": name, "nationality": nationality, "cedula": cedula},
+            headers=coord,
+        )
+        students[name] = response.json()["user"]["id"]
+    await client.post(
+        f"/subjects/{subject_id}/students",
+        json={"student_ids": list(students.values())},
+        headers=coord,
+    )
+    user = await session.get(User, teacher_id)
+    token, _ = create_access_token(user.id, user.role.value, user.token_version)
+    return {
+        "subject_id": subject_id,
+        "students": students,
+        "headers": {"Authorization": f"Bearer {token}"},
+    }
