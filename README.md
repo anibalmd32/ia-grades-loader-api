@@ -23,6 +23,10 @@ cp .env.example .env             # y completa los valores
 uv run fastapi dev app/main.py   # servidor con recarga en http://localhost:8000
 ```
 
+La primera vez, crea el super admin con el instalador (`POST /api/v1/setup`). Una vez creado, el
+instalador deja de estar disponible y las demás cuentas se crean desde dentro de la aplicación:
+super admin → coordinadores → profesores y estudiantes. No existe registro público.
+
 - Swagger UI: http://localhost:8000/docs
 - ReDoc: http://localhost:8000/redoc
 - OpenAPI JSON: http://localhost:8000/openapi.json

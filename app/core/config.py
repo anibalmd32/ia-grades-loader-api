@@ -33,11 +33,6 @@ class Settings(BaseSettings):
     # Longitud de la contraseña generada para estudiantes nuevos
     generated_password_length: int = 10
 
-    # Coordinador inicial (se crea al ejecutar el seed si no existe)
-    first_coordinator_cedula: str = ""
-    first_coordinator_password: SecretStr = SecretStr("")
-    first_coordinator_name: str = "Coordinador"
-
     # --- Modelo de IA (cualquier proveedor compatible con la API de OpenAI) ---
     llm_provider: str = "deepseek"
     llm_base_url: str = "https://api.deepseek.com"
