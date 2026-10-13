@@ -38,6 +38,9 @@ OPENAPI_TAGS = [
             "Personal: email y contraseña. Estudiantes: tipo (V/E), cédula y contraseña."
         ),
     },
+    {"name": "Coordinadores", "description": "Cuentas de coordinación (solo super admin)."},
+    {"name": "Profesores", "description": "Cuentas de profesores (coordinador)."},
+    {"name": "Estudiantes", "description": "Cuentas de estudiantes (coordinador)."},
     {"name": "Semestres", "description": "Gestión de semestres (coordinador)."},
     {"name": "Materias", "description": "Materias de cada semestre (coordinador)."},
 ]

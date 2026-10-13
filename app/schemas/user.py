@@ -1,6 +1,11 @@
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Annotated
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from app.models import Nationality, Role
+from app.schemas.common import CedulaNumber, Email
+
+FullName = Annotated[str, AfterValidator(str.strip), Field(min_length=3, max_length=150)]
 
 
 class UserRead(BaseModel):
@@ -16,3 +21,42 @@ class UserRead(BaseModel):
     is_active: bool
     must_change_password: bool
     telegram_linked: bool
+
+
+class StaffCreate(BaseModel):
+    """Alta de coordinador o profesor."""
+
+    full_name: FullName
+    email: Email
+
+
+class StaffUpdate(BaseModel):
+    full_name: FullName | None = None
+    email: Email | None = None
+    is_active: bool | None = None
+
+
+class StudentCreate(BaseModel):
+    full_name: FullName
+    nationality: Nationality = Field(description="V = venezolano, E = extranjero")
+    cedula: CedulaNumber
+
+
+class StudentUpdate(BaseModel):
+    full_name: FullName | None = None
+    nationality: Nationality | None = None
+    cedula: CedulaNumber | None = None
+    is_active: bool | None = None
+
+
+class UserCreated(BaseModel):
+    user: UserRead
+    generated_password: str = Field(
+        description="Contraseña inicial. Solo se muestra esta vez: entrégala al usuario."
+    )
+
+
+class PasswordReset(BaseModel):
+    generated_password: str = Field(
+        description="Nueva contraseña. Solo se muestra esta vez: entrégala al usuario."
+    )
