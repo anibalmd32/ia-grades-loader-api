@@ -3,8 +3,11 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+DEFAULT_JWT_SECRET = "change-me"
+MIN_JWT_SECRET_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -27,7 +30,7 @@ class Settings(BaseSettings):
     database_echo: bool = False
 
     # --- Autenticación (JWT) ---
-    jwt_secret_key: SecretStr = SecretStr("change-me")
+    jwt_secret_key: SecretStr = SecretStr(DEFAULT_JWT_SECRET)
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
     # Longitud de la contraseña generada para profesores y estudiantes nuevos
@@ -51,6 +54,17 @@ class Settings(BaseSettings):
 
     # --- Carga de archivos ---
     max_upload_size_mb: int = 10
+
+    @model_validator(mode="after")
+    def _check_jwt_secret(self) -> "Settings":
+        secret = self.jwt_secret_key.get_secret_value()
+        weak = secret == DEFAULT_JWT_SECRET or len(secret) < MIN_JWT_SECRET_LENGTH
+        if weak and self.app_env != "development":
+            raise ValueError(
+                f"JWT_SECRET_KEY debe tener al menos {MIN_JWT_SECRET_LENGTH} caracteres "
+                f"y no ser el valor por defecto cuando APP_ENV={self.app_env}"
+            )
+        return self
 
     @property
     def cors_origins_list(self) -> list[str]:
