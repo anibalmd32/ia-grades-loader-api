@@ -46,3 +46,9 @@ class SubjectRead(BaseModel):
     code: str
     name: str
     semester: SemesterRead
+
+
+class TeacherSubjectsUpdate(BaseModel):
+    subject_ids: list[int] = Field(
+        description="Conjunto completo de materias del profesor (reemplaza el anterior)"
+    )
