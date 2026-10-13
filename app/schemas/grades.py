@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -52,3 +52,36 @@ class GradesUpdate(BaseModel):
         if len(keys) != len(set(keys)):
             raise ValueError("Hay notas repetidas para el mismo estudiante y lapso")
         return self
+
+
+class ImportRow(BaseModel):
+    sheet: str | None
+    row: int | None = Field(description="Fila del Excel de donde sale la nota")
+    raw_cedula: str | None = Field(description="Cédula tal como aparece en el archivo")
+    raw_name: str | None
+    raw_value: str | None
+    student: StudentSummary | None = Field(description="Estudiante identificado, si se pudo")
+    term: int | None
+    value: int | None = Field(description="Nota a guardar (entero 1-20) si es válida")
+    current_value: int | None = Field(description="Nota actual en el sistema (se sobrescribirá)")
+    status: Literal["ok", "warning", "error"] = Field(
+        description="ok = lista; warning = revisar (p. ej. identificado por nombre); "
+        "error = no se puede guardar"
+    )
+    issues: list[str]
+
+
+class ImportSummary(BaseModel):
+    ok: int
+    warning: int
+    error: int
+
+
+class ImportPreview(BaseModel):
+    subject: SubjectRead
+    rows: list[ImportRow]
+    summary: ImportSummary
+    warnings: list[str] = Field(description="Observaciones generales de la IA")
+    students_without_grades: list[StudentSummary] = Field(
+        description="Matriculados que no aparecen en el archivo"
+    )
