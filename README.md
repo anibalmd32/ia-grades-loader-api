@@ -66,9 +66,9 @@ Todas están en [`.env.example`](.env.example). Cómo obtener las que no son obv
 Crea la base y un usuario en MySQL 8:
 
 ```sql
-CREATE DATABASE ia_grades_loader CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE ia_grades_loader_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER 'grades'@'%' IDENTIFIED BY 'grades';
-GRANT ALL PRIVILEGES ON ia_grades_loader.* TO 'grades'@'%';
+GRANT ALL PRIVILEGES ON ia_grades_loader_db.* TO 'grades'@'%';
 ```
 
 ### Secretos (`JWT_SECRET_KEY`, `TELEGRAM_WEBHOOK_SECRET`)

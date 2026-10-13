@@ -23,14 +23,14 @@ class Settings(BaseSettings):
     cors_origins: str = "http://localhost:1420,tauri://localhost,http://tauri.localhost"
 
     # --- Base de datos ---
-    database_url: str = "mysql+asyncmy://grades:grades@localhost:3306/ia_grades_loader"
+    database_url: str = "mysql+asyncmy://root:@localhost:3306/ia_grades_loader_db"
     database_echo: bool = False
 
     # --- Autenticación (JWT) ---
     jwt_secret_key: SecretStr = SecretStr("change-me")
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 60
-    # Longitud de la contraseña generada para estudiantes nuevos
+    # Longitud de la contraseña generada para profesores y estudiantes nuevos
     generated_password_length: int = 10
 
     # --- Modelo de IA (cualquier proveedor compatible con la API de OpenAI) ---
