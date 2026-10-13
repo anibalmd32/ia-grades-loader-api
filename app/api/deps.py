@@ -41,8 +41,9 @@ CurrentToken = Annotated[TokenData, Depends(get_token_data)]
 
 async def get_current_user(db: DbSession, token: CurrentToken) -> User:
     user = await db.get(User, token.user_id)
-    # Un usuario desactivado pierde el acceso aunque su token siga vigente
-    if user is None or not user.is_active:
+    # Un usuario desactivado, o cuya contraseña cambió después de emitirse el token,
+    # pierde el acceso aunque el token no haya expirado
+    if user is None or not user.is_active or user.token_version != token.token_version:
         raise _UNAUTHORIZED
     return user
 

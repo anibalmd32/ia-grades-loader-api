@@ -143,6 +143,8 @@ async def test_cambio_de_password(client, create_user):
         headers=bearer(token),
     )
     assert ok.status_code == 204
+    # Cambiar la contraseña cierra la sesión actual
+    assert (await client.get("/auth/me", headers=bearer(token))).status_code == 401
 
     assert (await login_student(client, 99)).status_code == 401
     relogin = await login_student(client, 99, password="nueva-clave")
@@ -183,3 +185,18 @@ async def test_super_admin_hereda_permisos_de_coordinador(
     token, _ = create_access_token(user.id, user.role.value)
     response = await roles_client.get("/coordinator", headers=bearer(token))
     assert response.status_code == expected
+
+
+async def test_cambio_de_password_cierra_todas_las_sesiones(client, create_user):
+    await create_user(Role.TEACHER, email="t@uni.edu")
+    other_device = (await login_staff(client, "t@uni.edu")).json()["access_token"]
+    current = (await login_staff(client, "t@uni.edu")).json()["access_token"]
+
+    await client.post(
+        "/auth/change-password",
+        json={"current_password": "secreta123", "new_password": "nueva-clave"},
+        headers=bearer(current),
+    )
+    assert (await client.get("/auth/me", headers=bearer(other_device))).status_code == 401
+    fresh = (await login_staff(client, "t@uni.edu", "nueva-clave")).json()["access_token"]
+    assert (await client.get("/auth/me", headers=bearer(fresh))).status_code == 200

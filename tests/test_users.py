@@ -172,3 +172,16 @@ async def test_reset_password(client, coord):
     )
     assert (await login(created["generated_password"])).status_code == 401
     assert (await login(new_password)).status_code == 200
+
+
+async def test_reset_password_cierra_las_sesiones_del_usuario(client, coord):
+    created = (await client.post("/students", json=student_payload(6), headers=coord)).json()
+    login = await client.post(
+        "/auth/login/student",
+        json={"nationality": "V", "cedula": 6, "password": created["generated_password"]},
+    )
+    student_headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+    assert (await client.get("/auth/me", headers=student_headers)).status_code == 200
+
+    await client.post(f"/students/{created['user']['id']}/reset-password", headers=coord)
+    assert (await client.get("/auth/me", headers=student_headers)).status_code == 401

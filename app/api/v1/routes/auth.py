@@ -84,6 +84,8 @@ async def me(user: CurrentUser) -> UserRead:
     summary="Cambiar la contraseña propia",
 )
 async def change_password(data: ChangePasswordRequest, user: CurrentUser, db: DbSession) -> None:
+    """Cierra **todas** las sesiones del usuario, incluida la actual: después hay que volver
+    a iniciar sesión con la contraseña nueva."""
     try:
         await auth_service.change_password(db, user, data.current_password, data.new_password)
     except auth_service.InvalidCredentialsError:

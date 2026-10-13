@@ -38,6 +38,8 @@ def test_token_ida_y_vuelta():
     assert data.user_id == 42
     assert len(data.jti) == 32
     assert data.expires_at.tzinfo is None
+    assert data.token_version == 0
+    assert decode_access_token(create_access_token(42, "student", 3)[0]).token_version == 3
 
 
 def test_cada_token_tiene_jti_distinto():
@@ -49,7 +51,7 @@ def test_cada_token_tiene_jti_distinto():
 def test_token_invalido_o_expirado():
     settings = get_settings()
     expired = jwt.encode(
-        {"sub": "1", "jti": "x", "exp": datetime.now(UTC) - timedelta(seconds=1)},
+        {"sub": "1", "jti": "x", "ver": 0, "exp": datetime.now(UTC) - timedelta(seconds=1)},
         settings.jwt_secret_key.get_secret_value(),
         algorithm=settings.jwt_algorithm,
     )

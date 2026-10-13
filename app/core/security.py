@@ -36,8 +36,12 @@ def generate_password(length: int | None = None) -> str:
     return "".join(secrets.choice(_PASSWORD_ALPHABET) for _ in range(length))
 
 
-def create_access_token(user_id: int, role: str) -> tuple[str, int]:
-    """Devuelve el token y su duración en segundos."""
+def create_access_token(user_id: int, role: str, token_version: int = 0) -> tuple[str, int]:
+    """Devuelve el token y su duración en segundos.
+
+    `token_version` es la versión de sesiones del usuario: al cambiar o restablecer la
+    contraseña se incrementa y todos los tokens emitidos antes dejan de valer.
+    """
     settings = get_settings()
     expires_in = settings.access_token_expire_minutes * 60
     now = datetime.now(UTC)
@@ -48,6 +52,7 @@ def create_access_token(user_id: int, role: str) -> tuple[str, int]:
         "exp": now + timedelta(seconds=expires_in),
         # Identificador único del token, necesario para poder revocarlo (logout)
         "jti": uuid.uuid4().hex,
+        "ver": token_version,
     }
     token = jwt.encode(
         payload, settings.jwt_secret_key.get_secret_value(), algorithm=settings.jwt_algorithm
@@ -60,6 +65,7 @@ class TokenData:
     user_id: int
     jti: str
     expires_at: datetime  # UTC sin zona horaria, igual que se guarda en BD
+    token_version: int
 
 
 def decode_access_token(token: str) -> TokenData | None:
@@ -70,12 +76,13 @@ def decode_access_token(token: str) -> TokenData | None:
             token,
             settings.jwt_secret_key.get_secret_value(),
             algorithms=[settings.jwt_algorithm],
-            options={"require": ["sub", "exp", "jti"]},
+            options={"require": ["sub", "exp", "jti", "ver"]},
         )
         return TokenData(
             user_id=int(payload["sub"]),
             jti=str(payload["jti"]),
             expires_at=datetime.fromtimestamp(payload["exp"], UTC).replace(tzinfo=None),
+            token_version=int(payload["ver"]),
         )
     except (jwt.InvalidTokenError, ValueError, TypeError):
         return None

@@ -53,6 +53,8 @@ class User(TimestampMixin, Base):
     # True mientras el usuario conserve la contraseña generada por el sistema
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
+    # Se incrementa al cambiar o restablecer la contraseña: invalida todas las sesiones
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
 
     @property
     def is_staff(self) -> bool:

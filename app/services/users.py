@@ -105,5 +105,6 @@ async def reset_password(db: AsyncSession, role: Role, user_id: int) -> str:
     password = generate_password()
     user.password_hash = hash_password(password)
     user.must_change_password = True
+    user.token_version += 1  # cierra todas sus sesiones abiertas
     await db.commit()
     return password

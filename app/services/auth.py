@@ -56,11 +56,12 @@ async def change_password(
         raise InvalidCredentialsError
     user.password_hash = hash_password(new_password)
     user.must_change_password = False
+    user.token_version += 1  # cierra todas las sesiones, incluida la actual
     await db.commit()
 
 
 def issue_token(user: User) -> TokenResponse:
-    token, expires_in = create_access_token(user.id, user.role.value)
+    token, expires_in = create_access_token(user.id, user.role.value, user.token_version)
     return TokenResponse(
         access_token=token,
         expires_in=expires_in,
