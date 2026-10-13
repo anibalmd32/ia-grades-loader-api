@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import StaticPool
 
 import app.models  # noqa: F401  (registra las tablas)
-from app.core.security import hash_password
+from app.core.security import create_access_token, hash_password
 from app.db.base import Base
 from app.db.session import get_db
 from app.main import app as fastapi_app
@@ -70,3 +70,15 @@ def create_user(session):
         return user
 
     return _create
+
+
+@pytest.fixture
+def login_as(create_user):
+    """Crea un usuario del rol indicado y devuelve las cabeceras con su token."""
+
+    async def _login(role: Role, **fields) -> dict[str, str]:
+        user = await create_user(role, **fields)
+        token, _ = create_access_token(user.id, user.role.value)
+        return {"Authorization": f"Bearer {token}"}
+
+    return _login

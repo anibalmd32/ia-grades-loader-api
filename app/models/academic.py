@@ -10,7 +10,8 @@ class Semester(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(50), unique=True)
 
-    subjects: Mapped[list["Subject"]] = relationship(back_populates="semester")
+    # lazy="raise": en async hay que cargarlas explícitamente (selectinload)
+    subjects: Mapped[list["Subject"]] = relationship(back_populates="semester", lazy="raise")
 
 
 class Subject(TimestampMixin, Base):
@@ -21,7 +22,8 @@ class Subject(TimestampMixin, Base):
     code: Mapped[str] = mapped_column(String(20), unique=True)
     name: Mapped[str] = mapped_column(String(150))
 
-    semester: Mapped[Semester] = relationship(back_populates="subjects")
+    # Se carga siempre junto a la materia (se muestra en todas las respuestas)
+    semester: Mapped[Semester] = relationship(back_populates="subjects", lazy="joined")
 
 
 class TeacherSubject(Base):

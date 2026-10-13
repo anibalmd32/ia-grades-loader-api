@@ -3,7 +3,7 @@
 import re
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BeforeValidator, EmailStr, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, EmailStr, Field
 
 
 def _digits_only(value: Any) -> Any:
@@ -28,3 +28,12 @@ CedulaNumber = Annotated[
 Email = Annotated[EmailStr, AfterValidator(str.lower)]
 
 NewPassword = Annotated[str, Field(min_length=8, max_length=128)]
+
+
+class Page[T](BaseModel):
+    """Respuesta paginada."""
+
+    items: list[T]
+    total: int
+    limit: int
+    offset: int

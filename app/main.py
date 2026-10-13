@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import get_settings
+from app.core.errors import register_error_handlers
 
 DESCRIPTION = """
 API para que los profesores carguen notas (manualmente o desde Excel con ayuda de IA)
@@ -37,6 +38,8 @@ OPENAPI_TAGS = [
             "Personal: email y contraseña. Estudiantes: tipo (V/E), cédula y contraseña."
         ),
     },
+    {"name": "Semestres", "description": "Gestión de semestres (coordinador)."},
+    {"name": "Materias", "description": "Materias de cada semestre (coordinador)."},
 ]
 
 
@@ -62,6 +65,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
+    register_error_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
     return app
 
