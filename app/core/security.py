@@ -1,6 +1,8 @@
 """Hash de contraseñas (argon2), tokens JWT y generación de contraseñas."""
 
 import secrets
+import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import jwt
@@ -44,6 +46,8 @@ def create_access_token(user_id: int, role: str) -> tuple[str, int]:
         "role": role,
         "iat": now,
         "exp": now + timedelta(seconds=expires_in),
+        # Identificador único del token, necesario para poder revocarlo (logout)
+        "jti": uuid.uuid4().hex,
     }
     token = jwt.encode(
         payload, settings.jwt_secret_key.get_secret_value(), algorithm=settings.jwt_algorithm
@@ -51,16 +55,27 @@ def create_access_token(user_id: int, role: str) -> tuple[str, int]:
     return token, expires_in
 
 
-def decode_access_token(token: str) -> int | None:
-    """Devuelve el id del usuario o None si el token es inválido o expiró."""
+@dataclass(frozen=True)
+class TokenData:
+    user_id: int
+    jti: str
+    expires_at: datetime  # UTC sin zona horaria, igual que se guarda en BD
+
+
+def decode_access_token(token: str) -> TokenData | None:
+    """Devuelve los datos del token o None si es inválido o expiró."""
     settings = get_settings()
     try:
         payload = jwt.decode(
             token,
             settings.jwt_secret_key.get_secret_value(),
             algorithms=[settings.jwt_algorithm],
-            options={"require": ["sub", "exp"]},
+            options={"require": ["sub", "exp", "jti"]},
         )
-        return int(payload["sub"])
-    except (jwt.InvalidTokenError, ValueError):
+        return TokenData(
+            user_id=int(payload["sub"]),
+            jti=str(payload["jti"]),
+            expires_at=datetime.fromtimestamp(payload["exp"], UTC).replace(tzinfo=None),
+        )
+    except (jwt.InvalidTokenError, ValueError, TypeError):
         return None

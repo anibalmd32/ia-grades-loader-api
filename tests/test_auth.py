@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import pytest
 from fastapi import Depends, FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -5,7 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from app.api.deps import require_roles
 from app.core.security import create_access_token
 from app.db.session import get_db
-from app.models import Nationality, Role
+from app.models import Nationality, RevokedToken, Role
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -96,6 +98,32 @@ async def test_usuario_desactivado_pierde_acceso_con_token_vigente(client, creat
     user.is_active = False
     await session.commit()
     assert (await client.get("/auth/me", headers=bearer(token))).status_code == 401
+
+
+async def test_logout_revoca_solo_el_token_usado(client, create_user):
+    await create_user(Role.SUPER_ADMIN, email="admin@uni.edu")
+    token_a = (await login_staff(client, "admin@uni.edu")).json()["access_token"]
+    token_b = (await login_staff(client, "admin@uni.edu")).json()["access_token"]
+
+    assert (await client.post("/auth/logout", headers=bearer(token_a))).status_code == 204
+    assert (await client.get("/auth/me", headers=bearer(token_a))).status_code == 401
+    assert (await client.post("/auth/logout", headers=bearer(token_a))).status_code == 401
+    # La otra sesión (otro dispositivo) sigue activa
+    assert (await client.get("/auth/me", headers=bearer(token_b))).status_code == 200
+
+
+async def test_logout_limpia_revocados_vencidos(client, create_user, session):
+    session.add(RevokedToken(jti="viejo", expires_at=datetime(2000, 1, 1)))
+    await session.commit()
+    await create_user(Role.TEACHER, email="t@uni.edu")
+    token = (await login_staff(client, "t@uni.edu")).json()["access_token"]
+    await client.post("/auth/logout", headers=bearer(token))
+    session.expire_all()
+    assert await session.get(RevokedToken, "viejo") is None
+
+
+async def test_logout_sin_token(client):
+    assert (await client.post("/auth/logout")).status_code == 401
 
 
 async def test_cambio_de_password(client, create_user):

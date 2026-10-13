@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentToken, CurrentUser, DbSession
 from app.models import Nationality
 from app.schemas.auth import ChangePasswordRequest, StaffLogin, StudentLogin, TokenResponse
 from app.schemas.user import UserRead
@@ -58,6 +58,19 @@ async def login_oauth2(
     nationality = Nationality(match.group(1).upper())
     cedula = int(match.group(2).replace(".", ""))
     return await _login(auth_service.authenticate_student(db, nationality, cedula, form.password))
+
+
+@router.post(
+    "/logout",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Cerrar sesión (revoca el token actual)",
+)
+async def logout(token: CurrentToken, db: DbSession) -> None:
+    """Invalida el token con el que se hace la petición; deja de servir de inmediato.
+
+    En Swagger, después de llamarlo pulsa **Authorize → Logout** para que deje de enviarlo.
+    """
+    await auth_service.logout(db, token)
 
 
 @router.get("/me", summary="Usuario autenticado")

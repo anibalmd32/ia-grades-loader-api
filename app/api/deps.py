@@ -8,9 +8,9 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.security import decode_access_token
+from app.core.security import TokenData, decode_access_token
 from app.db.session import get_db
-from app.models import Role, User
+from app.models import RevokedToken, Role, User
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -26,13 +26,21 @@ _UNAUTHORIZED = HTTPException(
 )
 
 
-async def get_current_user(
+async def get_token_data(
     db: DbSession, token: Annotated[str | None, Depends(oauth2_scheme)]
-) -> User:
-    user_id = decode_access_token(token) if token else None
-    if user_id is None:
+) -> TokenData:
+    data = decode_access_token(token) if token else None
+    # Un token revocado por logout deja de valer aunque no haya expirado
+    if data is None or await db.get(RevokedToken, data.jti) is not None:
         raise _UNAUTHORIZED
-    user = await db.get(User, user_id)
+    return data
+
+
+CurrentToken = Annotated[TokenData, Depends(get_token_data)]
+
+
+async def get_current_user(db: DbSession, token: CurrentToken) -> User:
+    user = await db.get(User, token.user_id)
     # Un usuario desactivado pierde el acceso aunque su token siga vigente
     if user is None or not user.is_active:
         raise _UNAUTHORIZED

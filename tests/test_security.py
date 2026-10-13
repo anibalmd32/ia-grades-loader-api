@@ -33,13 +33,23 @@ def test_password_generada():
 def test_token_ida_y_vuelta():
     token, expires_in = create_access_token(42, "student")
     assert expires_in == get_settings().access_token_expire_minutes * 60
-    assert decode_access_token(token) == 42
+    data = decode_access_token(token)
+    assert data is not None
+    assert data.user_id == 42
+    assert len(data.jti) == 32
+    assert data.expires_at.tzinfo is None
+
+
+def test_cada_token_tiene_jti_distinto():
+    a, _ = create_access_token(1, "student")
+    b, _ = create_access_token(1, "student")
+    assert decode_access_token(a).jti != decode_access_token(b).jti
 
 
 def test_token_invalido_o_expirado():
     settings = get_settings()
     expired = jwt.encode(
-        {"sub": "1", "exp": datetime.now(UTC) - timedelta(seconds=1)},
+        {"sub": "1", "jti": "x", "exp": datetime.now(UTC) - timedelta(seconds=1)},
         settings.jwt_secret_key.get_secret_value(),
         algorithm=settings.jwt_algorithm,
     )

@@ -1,10 +1,12 @@
 """Autenticación: el personal entra con email y los estudiantes con tipo + número de cédula."""
 
-from sqlalchemy import select
+from datetime import UTC, datetime
+
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import create_access_token, hash_password, verify_password
-from app.models import STAFF_ROLES, Nationality, Role, User
+from app.core.security import TokenData, create_access_token, hash_password, verify_password
+from app.models import STAFF_ROLES, Nationality, RevokedToken, Role, User
 from app.schemas.auth import TokenResponse
 
 
@@ -65,3 +67,12 @@ def issue_token(user: User) -> TokenResponse:
         role=user.role,
         must_change_password=user.must_change_password,
     )
+
+
+async def logout(db: AsyncSession, token: TokenData) -> None:
+    """Revoca el token actual y aprovecha para limpiar los revocados ya vencidos."""
+    now = datetime.now(UTC).replace(tzinfo=None)
+    await db.execute(delete(RevokedToken).where(RevokedToken.expires_at < now))
+    if await db.get(RevokedToken, token.jti) is None:
+        db.add(RevokedToken(jti=token.jti, expires_at=token.expires_at))
+    await db.commit()

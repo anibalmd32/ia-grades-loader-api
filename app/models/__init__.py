@@ -3,6 +3,7 @@
 from app.models.academic import Semester, Subject, TeacherSubject
 from app.models.enrollment import Enrollment, Grade
 from app.models.installation import Installation
+from app.models.revoked_token import RevokedToken
 from app.models.user import STAFF_ROLES, Nationality, Role, User
 
 __all__ = [
@@ -11,6 +12,7 @@ __all__ = [
     "Grade",
     "Installation",
     "Nationality",
+    "RevokedToken",
     "Role",
     "Semester",
     "Subject",
