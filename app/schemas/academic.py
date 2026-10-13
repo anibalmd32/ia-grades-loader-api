@@ -52,3 +52,16 @@ class TeacherSubjectsUpdate(BaseModel):
     subject_ids: list[int] = Field(
         description="Conjunto completo de materias del profesor (reemplaza el anterior)"
     )
+
+
+class EnrollSubjectsRequest(BaseModel):
+    subject_ids: list[int] = Field(min_length=1, description="Materias a matricular")
+
+
+class EnrollStudentsRequest(BaseModel):
+    student_ids: list[int] = Field(min_length=1, description="Estudiantes a matricular")
+
+
+class EnrollmentResult(BaseModel):
+    added: int = Field(description="Matrículas nuevas")
+    already_enrolled: int = Field(description="Ya existían y se ignoraron")

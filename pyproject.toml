@@ -36,6 +36,7 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = ["error"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
