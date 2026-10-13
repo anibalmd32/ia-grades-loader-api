@@ -2,29 +2,36 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.models import Enrollment, Grade, Subject, TeacherSubject, User
-from app.models.enrollment import TERMS_PER_SEMESTER
+from app.models.enrollment import GRADE_DECIMALS, TERMS_PER_SEMESTER
 
 TERMS = range(1, TERMS_PER_SEMESTER + 1)
+_QUANTUM = Decimal(1).scaleb(-GRADE_DECIMALS)  # 0.01
 
 
-def average(values: list[int | None]) -> float | None:
+def quantize(value: Decimal) -> Decimal:
+    """Redondeo escolar (la mitad hacia arriba) a los decimales admitidos."""
+    return value.quantize(_QUANTUM, rounding=ROUND_HALF_UP)
+
+
+def average(values: list[Decimal | None]) -> Decimal | None:
     loaded = [v for v in values if v is not None]
-    return round(sum(loaded) / len(loaded), 2) if loaded else None
+    return quantize(sum(loaded, Decimal(0)) / len(loaded)) if loaded else None
 
 
 @dataclass
 class StudentRow:
     student: User
-    grades: dict[int, int | None]  # lapso -> nota
+    grades: dict[int, Decimal | None]  # lapso -> nota
 
     @property
-    def average(self) -> float | None:
+    def average(self) -> Decimal | None:
         return average(list(self.grades.values()))
 
 
@@ -68,7 +75,7 @@ async def subject_roster(db: AsyncSession, subject_id: int) -> list[StudentRow]:
             .order_by(User.full_name)
         )
     ).all()
-    grades: dict[int, dict[int, int]] = defaultdict(dict)
+    grades: dict[int, dict[int, Decimal]] = defaultdict(dict)
     rows = await db.execute(
         select(Grade.enrollment_id, Grade.term, Grade.value).where(
             Grade.enrollment_id.in_([e for e, _ in enrollments])
@@ -85,7 +92,7 @@ async def subject_roster(db: AsyncSession, subject_id: int) -> list[StudentRow]:
 async def save_grades(
     db: AsyncSession,
     subject_id: int,
-    entries: list[tuple[int, int, int | None]],
+    entries: list[tuple[int, int, Decimal | None]],
     updated_by_id: int,
 ) -> None:
     """Crea, modifica o borra (valor None) notas de (estudiante, lapso, valor).

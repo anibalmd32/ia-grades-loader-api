@@ -1,12 +1,28 @@
+from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
 
-from app.models.enrollment import MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
+from app.models.enrollment import GRADE_DECIMALS, MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
 from app.schemas.academic import SubjectRead
 
 Term = Annotated[int, Field(ge=1, le=TERMS_PER_SEMESTER, description="Lapso (1 a 3)")]
-GradeValue = Annotated[int, Field(ge=MIN_GRADE, le=MAX_GRADE, description="Nota (1 a 20)")]
+
+# Decimal exacto internamente; en JSON viaja como número (15.75), no como texto
+_AsNumber = PlainSerializer(float, return_type=float, when_used="json")
+GradeValue = Annotated[
+    Decimal,
+    Field(
+        ge=MIN_GRADE,
+        le=MAX_GRADE,
+        max_digits=2 + GRADE_DECIMALS,
+        decimal_places=GRADE_DECIMALS,
+        description=f"Nota del {MIN_GRADE} al {MAX_GRADE}, hasta {GRADE_DECIMALS} decimales",
+        examples=[15.75],
+    ),
+    _AsNumber,
+]
+GradeNumber = Annotated[Decimal, _AsNumber]
 
 
 class TeacherSubject(SubjectRead):
@@ -29,7 +45,9 @@ class TermGrade(BaseModel):
 class StudentGrades(BaseModel):
     student: StudentSummary
     grades: list[TermGrade] = Field(description="Siempre un elemento por lapso, en orden")
-    average: float | None = Field(description="Promedio de las notas cargadas (2 decimales)")
+    average: GradeNumber | None = Field(
+        description="Promedio de las notas cargadas (2 decimales, redondeo hacia arriba en .005)"
+    )
 
 
 class SubjectGrades(BaseModel):
@@ -62,8 +80,10 @@ class ImportRow(BaseModel):
     raw_value: str | None
     student: StudentSummary | None = Field(description="Estudiante identificado, si se pudo")
     term: int | None
-    value: int | None = Field(description="Nota a guardar (entero 1-20) si es válida")
-    current_value: int | None = Field(description="Nota actual en el sistema (se sobrescribirá)")
+    value: GradeNumber | None = Field(description="Nota a guardar (1-20) si es válida")
+    current_value: GradeNumber | None = Field(
+        description="Nota actual en el sistema (se sobrescribirá)"
+    )
     status: Literal["ok", "warning", "error"] = Field(
         description="ok = lista; warning = revisar (p. ej. identificado por nombre); "
         "error = no se puede guardar"

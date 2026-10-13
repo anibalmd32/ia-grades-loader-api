@@ -1,4 +1,6 @@
-from sqlalchemy import CheckConstraint, ForeignKey, SmallInteger, UniqueConstraint
+from decimal import Decimal
+
+from sqlalchemy import CheckConstraint, ForeignKey, Numeric, SmallInteger, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -6,6 +8,8 @@ from app.db.base import Base, TimestampMixin
 TERMS_PER_SEMESTER = 3
 MIN_GRADE = 1
 MAX_GRADE = 20
+# Las notas admiten decimales (p. ej. 15.75); se guardan como DECIMAL exacto
+GRADE_DECIMALS = 2
 
 
 class Enrollment(TimestampMixin, Base):
@@ -36,7 +40,7 @@ class Grade(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     enrollment_id: Mapped[int] = mapped_column(ForeignKey("enrollments.id", ondelete="CASCADE"))
     term: Mapped[int] = mapped_column(SmallInteger)
-    value: Mapped[int] = mapped_column(SmallInteger)
+    value: Mapped[Decimal] = mapped_column(Numeric(4, GRADE_DECIMALS))
     # Último usuario (profesor/coordinador) que cargó o modificó la nota
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 

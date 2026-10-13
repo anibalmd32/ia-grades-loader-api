@@ -126,13 +126,30 @@ async def test_cargar_corregir_y_borrar_notas(client, school, session):
         {"term": 1, "value": 21},
         {"term": 0, "value": 10},
         {"term": 4, "value": 10},
-        {"term": 1, "value": 12.5},
+        {"term": 1, "value": 12.555},
+        {"term": 1, "value": 20.01},
     ],
 )
 async def test_validacion_de_rangos(client, school, entry):
     entries = [{"student_id": school["students"]["Ana"], **entry}]
     response = await put_grades(client, school, entries)
     assert response.status_code == 422
+
+
+async def test_notas_con_decimales_y_promedio(client, school):
+    ana = school["students"]["Ana"]
+    response = await put_grades(
+        client,
+        school,
+        [
+            {"student_id": ana, "term": 1, "value": 15.75},
+            {"student_id": ana, "term": 2, "value": "12.5"},
+            {"student_id": ana, "term": 3, "value": 18},
+        ],
+    )
+    assert response.status_code == 200
+    # (15.75 + 12.5 + 18) / 3 = 15.41666... -> 15.42
+    assert grades_of(response.json(), "Ana") == ([15.75, 12.5, 18], 15.42)
 
 
 async def test_notas_repetidas_en_la_peticion(client, school):

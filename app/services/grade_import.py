@@ -9,6 +9,7 @@ confirma con el endpoint normal de carga de notas.
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 from pydantic import BaseModel
@@ -17,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.ai.client import LLMClient
 from app.ai.prompts import GRADES_EXTRACTION_SYSTEM, grades_extraction_user
 from app.models import Subject, User
-from app.models.enrollment import MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
+from app.models.enrollment import GRADE_DECIMALS, MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
 from app.services import excel, grades
 
 Status = Literal["ok", "warning", "error"]
@@ -51,8 +52,8 @@ class PreviewRow:
     extracted: ExtractedGrade
     student: User | None = None
     term: int | None = None
-    value: int | None = None
-    current_value: int | None = None
+    value: Decimal | None = None
+    current_value: Decimal | None = None
     issues: list[str] = field(default_factory=list)
     status: Status = "ok"
 
@@ -102,17 +103,24 @@ def parse_term(raw: int | str | None) -> int | None:
     return term if 1 <= term <= TERMS_PER_SEMESTER else None
 
 
-def parse_value(raw: float | int | str | None) -> int | None:
-    """Solo acepta enteros del 1 al 20 (también "15", "15,0" o 15.0)."""
+def parse_value(raw: float | int | str | None) -> tuple[Decimal | None, bool]:
+    """Convierte la nota a Decimal (acepta 15, "15,5", 15.75...).
+
+    Devuelve (nota, redondeada): si trae más de GRADE_DECIMALS decimales se redondea
+    (la mitad hacia arriba) y se avisa. Fuera de 1-20 o no numérica devuelve None.
+    """
     if raw is None:
-        return None
+        return None, False
     try:
-        number = float(str(raw).strip().replace(",", "."))
-    except ValueError:
-        return None
-    if not number.is_integer() or not MIN_GRADE <= number <= MAX_GRADE:
-        return None
-    return int(number)
+        number = Decimal(str(raw).strip().replace(",", "."))
+    except InvalidOperation:
+        return None, False
+    if not number.is_finite():
+        return None, False
+    rounded = grades.quantize(number)
+    if not MIN_GRADE <= rounded <= MAX_GRADE:
+        return None, False
+    return rounded, rounded != number
 
 
 class _Roster:
@@ -179,12 +187,18 @@ def _validate(row: PreviewRow, roster: _Roster) -> None:
     if row.term is None:
         row.flag("error", "No se pudo determinar el lapso (1 a 3)")
 
-    row.value = parse_value(row.extracted.value)
+    row.value, rounded = parse_value(row.extracted.value)
     if row.value is None:
         row.flag(
             "error",
-            f"Nota inválida «{row.extracted.value}»: debe ser un entero del {MIN_GRADE} al "
+            f"Nota inválida «{row.extracted.value}»: debe ser un número del {MIN_GRADE} al "
             f"{MAX_GRADE}",
+        )
+    elif rounded:
+        row.flag(
+            "warning",
+            f"Nota «{row.extracted.value}» redondeada a {row.value} "
+            f"({GRADE_DECIMALS} decimales como máximo)",
         )
 
     if row.extracted.note:

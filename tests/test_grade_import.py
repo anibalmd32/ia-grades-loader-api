@@ -1,4 +1,5 @@
 import io
+from decimal import Decimal
 
 import pytest
 from openpyxl import Workbook
@@ -38,15 +39,20 @@ def test_parse_cedula(raw, expected):
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [
-        (15, 15),
-        ("15", 15),
-        (15.0, 15),
-        ("15,0", 15),
-        (15.5, None),
-        (0, None),
-        (21, None),
-        ("NP", None),
-        (None, None),
+        (15, (Decimal("15"), False)),
+        ("15", (Decimal("15"), False)),
+        (15.0, (Decimal("15"), False)),
+        ("15,5", (Decimal("15.5"), False)),
+        (15.75, (Decimal("15.75"), False)),
+        (15.555, (Decimal("15.56"), True)),
+        ("15.3333", (Decimal("15.33"), True)),
+        (20.004, (Decimal("20.00"), True)),
+        (20.005, (None, False)),
+        (0.5, (None, False)),
+        (21, (None, False)),
+        ("NP", (None, False)),
+        ("nan", (None, False)),
+        (None, (None, False)),
     ],
 )
 def test_parse_value(raw, expected):
@@ -182,7 +188,7 @@ async def test_previsualizacion_completa(client, course, use_llm, session):
                 entry(row=3, student_name="carlos ruiz", term="Lapso 2", value="12"),
                 entry(row=4, cedula="2", student_name="B", term=1, value=14),
                 entry(row=5, cedula="V-99", student_name="Nadie", term=1, value=11),
-                entry(row=6, cedula="V-1", term=2, value=15.5),
+                entry(row=6, cedula="V-1", term=2, value="quince"),
                 entry(row=7, cedula="V-2", term=None, value=13, note="sin columna de lapso"),
             ],
             "warnings": ["La fila 8 parece un total y se ignoró"],
@@ -210,7 +216,7 @@ async def test_previsualizacion_completa(client, course, use_llm, session):
 
     assert rows[4]["status"] == "error"
     assert rows[4]["value"] is None
-    assert "15.5" in rows[4]["issues"][0]
+    assert "quince" in rows[4]["issues"][0]
 
     assert rows[5]["status"] == "error"
     assert any("lapso" in i for i in rows[5]["issues"])
@@ -229,6 +235,21 @@ async def test_previsualizacion_completa(client, course, use_llm, session):
     # Previsualizar no guarda nada
     stored = (await session.scalars(select(Grade))).all()
     assert [(g.term, g.value) for g in stored] == [(1, 10)]
+
+
+async def test_notas_con_decimales(client, course, use_llm):
+    use_llm(
+        {
+            "grades": [
+                entry(row=2, cedula="V-1", term=1, value="15,75"),
+                entry(row=3, cedula="V-3", term=1, value=12.3333),
+            ]
+        }
+    )
+    rows = (await upload(client, course)).json()["rows"]
+    assert (rows[0]["status"], rows[0]["value"]) == ("ok", 15.75)
+    assert (rows[1]["status"], rows[1]["value"]) == ("warning", 12.33)
+    assert "redondeada a 12.33" in rows[1]["issues"][0]
 
 
 async def test_lapso_por_defecto(client, course, use_llm):
