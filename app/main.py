@@ -11,10 +11,15 @@ y los estudiantes las consulten de forma tradicional, en lenguaje natural o por 
 * Notas del **1 al 20**, una por **lapso** (3 lapsos por semestre).
 * Autenticación con **JWT**. Para probar aquí usa el botón *Authorize*: en `username` escribe
   el email (personal) o la cédula con su tipo, p. ej. `V-12345678` (estudiantes).
+* No hay registro público: el primer usuario (super admin) se crea con `POST /setup`.
 """
 
 OPENAPI_TAGS = [
     {"name": "Salud", "description": "Estado del servicio."},
+    {
+        "name": "Instalación",
+        "description": "Creación del super admin. Solo disponible mientras no exista ninguno.",
+    },
     {
         "name": "Autenticación",
         "description": (
