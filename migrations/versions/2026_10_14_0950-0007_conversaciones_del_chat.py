@@ -64,9 +64,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(
-        op.f("ix_conversation_messages_conversation_id"), table_name="conversation_messages"
-    )
+    # Se borra la tabla directamente: sus índices se van con ella (MySQL no deja borrar
+    # antes un índice que usa una clave foránea, error 1553)
     op.drop_table("conversation_messages")
-    op.drop_index("ix_conversations_student_id_updated_at", table_name="conversations")
     op.drop_table("conversations")

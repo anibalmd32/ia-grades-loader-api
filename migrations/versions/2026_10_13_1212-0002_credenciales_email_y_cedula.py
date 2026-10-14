@@ -48,6 +48,8 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # Solo funciona con la tabla users vacía: el personal no tiene cédula y la columna vuelve a
+    # ser obligatoria. Es un cambio estructural sin vuelta atrás con datos reales.
     op.drop_constraint(op.f("ck_users_student_requires_cedula"), "users", type_="check")
     op.drop_constraint(op.f("ck_users_staff_requires_email"), "users", type_="check")
     op.drop_constraint(op.f("ck_users_cedula_positive"), "users", type_="check")

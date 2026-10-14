@@ -63,6 +63,6 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_import_jobs_teacher_id"), table_name="import_jobs")
-    op.drop_index("ix_import_jobs_status_created_at", table_name="import_jobs")
+    # Se borra la tabla directamente: sus índices se van con ella (MySQL no deja borrar
+    # antes un índice que usa una clave foránea, error 1553)
     op.drop_table("import_jobs")
