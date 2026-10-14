@@ -150,3 +150,31 @@ API usa `TELEGRAM_BOT_EMBEDDED=false`.
 
 No hace falta ningún "chat id" en el `.env`: cada estudiante vincula su cuenta desde la app, que
 genera un enlace `t.me/<bot>?start=<código>`, y el chat id se guarda en la base de datos.
+
+## Despliegue con Docker
+
+La imagen (`Dockerfile`, multi-etapa con uv) arranca con `APP_ENV=production`, aplica las
+migraciones al iniciar (`RUN_MIGRATIONS=false` para omitirlo) y corre como usuario sin
+privilegios. `docker-compose.yml` levanta la API y MySQL 8.4:
+
+```bash
+# En el .env: MYSQL_PASSWORD y MYSQL_ROOT_PASSWORD (además de las variables de siempre)
+docker compose up -d --build
+docker compose logs -f api
+```
+
+Worker de importaciones en un contenedor aparte (opcional): pon `IMPORT_WORKER_EMBEDDED=false`
+y ejecuta `docker compose --profile worker up -d`.
+
+### Lista de comprobación para producción
+
+- `JWT_SECRET_KEY` de al menos 32 caracteres (la API no arranca en producción sin él).
+- `CORS_ORIGINS` solo con los orígenes reales del front.
+- HTTPS delante de la API con un proxy inverso (Nginx, Caddy, Traefik); la imagen ya acepta
+  sus cabeceras (`--proxy-headers`).
+- Telegram: `TELEGRAM_WEBHOOK_URL` con el dominio público (basta el dominio) y
+  `TELEGRAM_WEBHOOK_SECRET`. Si usas polling, solo **una** instancia con el bot activo
+  (`TELEGRAM_BOT_EMBEDDED=false` en las demás).
+- Más de una réplica de la API: `RUN_MIGRATIONS=false` en todas menos una.
+- Copias de seguridad del volumen `mysql-data` (p. ej. `mysqldump` programado).
+- Revisa `CHAT_RATE_LIMIT_PER_MINUTE` según el presupuesto del proveedor de IA.

@@ -1,0 +1,61 @@
+# API + MySQL listos para producción (o para probar el despliegue en local).
+#
+#   docker compose up -d --build              # API (con worker y bot embebidos) + MySQL
+#   docker compose --profile worker up -d     # además, un worker de importaciones aparte
+#
+# Lee la configuración del .env (mismas variables que en desarrollo) y además necesita
+# MYSQL_PASSWORD y MYSQL_ROOT_PASSWORD. DATABASE_URL se construye aquí para apuntar al
+# contenedor de MySQL.
+
+x-api: &api
+  build: .
+  image: ia-grades-loader-api
+  env_file: .env
+  environment:
+    DATABASE_URL: mysql+asyncmy://${MYSQL_USER:-grades}:${MYSQL_PASSWORD:?Define MYSQL_PASSWORD en el .env}@db:3306/${MYSQL_DATABASE:-ia_grades_loader}
+    APP_ENV: ${APP_ENV:-production}
+    DEBUG: "false"
+  depends_on:
+    db:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  db:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-ia_grades_loader}
+      MYSQL_USER: ${MYSQL_USER:-grades}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?Define MYSQL_PASSWORD en el .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Define MYSQL_ROOT_PASSWORD en el .env}
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    <<: *api
+    ports:
+      - "${API_PORT:-8000}:8000"
+
+  # Worker de importaciones separado (opcional). Si lo usas, pon IMPORT_WORKER_EMBEDDED=false
+  # en el .env para que la API no procese también la cola.
+  worker:
+    <<: *api
+    profiles: ["worker"]
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: mysql+asyncmy://${MYSQL_USER:-grades}:${MYSQL_PASSWORD:?Define MYSQL_PASSWORD en el .env}@db:3306/${MYSQL_DATABASE:-ia_grades_loader}
+      APP_ENV: ${APP_ENV:-production}
+      RUN_MIGRATIONS: "false"
+      TELEGRAM_BOT_EMBEDDED: "false"
+    healthcheck:
+      disable: true
+
+volumes:
+  mysql-data:

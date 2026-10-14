@@ -1,0 +1,18 @@
+# Nunca dentro de la imagen
+.env
+.env.*
+!.env.example
+.git
+.venv
+
+# Solo para desarrollo
+tests
+.pytest_cache
+.ruff_cache
+.coverage
+htmlcov
+**/__pycache__
+*.db
+uploads
+.vscode
+.idea
