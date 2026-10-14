@@ -1,10 +1,24 @@
+"""Fixtures comunes.
+
+Por defecto los tests usan SQLite en memoria (rápido). Para correr la MISMA suite contra MySQL
+real, define TEST_DATABASE_URL apuntando a una base de pruebas (su nombre debe contener
+"test"; se vacía en cada test):
+
+    TEST_DATABASE_URL=mysql+asyncmy://root:CLAVE@localhost:3306/ia_grades_loader_test uv run pytest
+"""
+
+import os
+import subprocess
+import sys
 from collections.abc import AsyncIterator
+from pathlib import Path
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import event
+from sqlalchemy import event, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
 import app.models  # noqa: F401  (registra las tablas)
 from app.core.security import create_access_token, hash_password
@@ -40,9 +54,81 @@ def _reset_rate_limits():
     question_limiter.reset()
 
 
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
+
+
+@pytest.fixture(scope="session")
+def _mysql_schema() -> None:
+    """Prepara la base MySQL de pruebas con las migraciones reales (de cero a head)."""
+    if not TEST_DATABASE_URL:
+        return
+    database = make_url(TEST_DATABASE_URL).database or ""
+    from app.core.config import get_settings
+
+    if "test" not in database or get_settings().database_url == TEST_DATABASE_URL:
+        pytest.exit(
+            f"TEST_DATABASE_URL apunta a '{database}': por seguridad debe ser una base "
+            "distinta de la de trabajo y su nombre debe contener 'test' (se vacía en cada test)",
+            returncode=2,
+        )
+    import asyncio
+
+    async def drop_everything() -> None:
+        engine = create_async_engine(TEST_DATABASE_URL, poolclass=NullPool)
+        async with engine.begin() as conn:
+            tables = await conn.execute(
+                text("SELECT table_name FROM information_schema.tables WHERE table_schema = :db"),
+                {"db": database},
+            )
+            await conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+            for (table,) in tables.all():
+                await conn.execute(text(f"DROP TABLE `{table}`"))
+            await conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
+        await engine.dispose()
+
+    asyncio.run(drop_everything())
+    env = {**os.environ, "DATABASE_URL": TEST_DATABASE_URL}
+    root = Path(__file__).resolve().parent.parent
+    # Ida y vuelta completa sobre la base vacía: valida también los downgrade en MySQL
+    for args in (["upgrade", "head"], ["downgrade", "base"], ["upgrade", "head"]):
+        result = subprocess.run(
+            [sys.executable, "-m", "alembic", *args],
+            cwd=root,
+            env=env,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            detail = result.stderr[-2000:]
+            pytest.exit(f"alembic {' '.join(args)} falló en MySQL:\n{detail}", returncode=2)
+
+
+async def _mysql_sessionmaker() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    # READ COMMITTED: la sesión del fixture `session` vive todo el test y, con el REPEATABLE
+    # READ por defecto de MySQL, no vería lo que la API confirma después de su primera
+    # lectura. En la app cada petición usa su propia sesión corta, así que no le afecta.
+    engine = create_async_engine(
+        TEST_DATABASE_URL, poolclass=NullPool, isolation_level="READ COMMITTED"
+    )
+    async with engine.begin() as conn:
+        await conn.execute(text("SET FOREIGN_KEY_CHECKS = 0"))
+        for table in Base.metadata.sorted_tables:
+            await conn.execute(text(f"TRUNCATE TABLE `{table.name}`"))
+        await conn.execute(text("SET FOREIGN_KEY_CHECKS = 1"))
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
 @pytest.fixture
-async def sessionmaker() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
-    """SQLite en memoria con el esquema completo, compartida por todas las conexiones."""
+async def sessionmaker(_mysql_schema) -> AsyncIterator[async_sessionmaker[AsyncSession]]:
+    """SQLite en memoria (o MySQL si hay TEST_DATABASE_URL) con el esquema completo."""
+    if TEST_DATABASE_URL:
+        async for maker in _mysql_sessionmaker():
+            yield maker
+        return
+
+    # Ojo: StaticPool comparte UNA conexión entre todas las sesiones (necesario para que la
+    # base en memoria sea la misma); no sirve para probar concurrencia real.
     engine = create_async_engine("sqlite+aiosqlite:///:memory:", poolclass=StaticPool)
 
     @event.listens_for(engine.sync_engine, "connect")

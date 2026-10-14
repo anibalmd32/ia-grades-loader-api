@@ -1,5 +1,5 @@
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.models import (
     Enrollment,
@@ -11,6 +11,10 @@ from app.models import (
     Subject,
     User,
 )
+
+# Una restricción CHECK violada llega como IntegrityError en SQLite pero como OperationalError
+# (código 3819) en MySQL; las de UNIQUE / clave primaria son IntegrityError en ambos.
+CHECK_VIOLATION = (IntegrityError, OperationalError)
 
 
 def make_student(cedula: int, nationality: Nationality = Nationality.VENEZOLANO) -> User:
@@ -58,19 +62,19 @@ async def test_email_unico(session):
 
 async def test_personal_requiere_email(session):
     session.add(User(role=Role.TEACHER, full_name="Sin email", password_hash="x"))
-    with pytest.raises(IntegrityError):
+    with pytest.raises(CHECK_VIOLATION):
         await session.flush()
 
 
 async def test_estudiante_requiere_cedula_y_nacionalidad(session):
     session.add(User(role=Role.STUDENT, full_name="Sin cédula", cedula=5, password_hash="x"))
-    with pytest.raises(IntegrityError):
+    with pytest.raises(CHECK_VIOLATION):
         await session.flush()
 
 
 async def test_cedula_positiva(session):
     session.add(make_student(0))
-    with pytest.raises(IntegrityError):
+    with pytest.raises(CHECK_VIOLATION):
         await session.flush()
 
 
@@ -87,7 +91,7 @@ async def test_usuario_activo_por_defecto(session):
 async def test_nota_fuera_de_rango(session, term, value):
     enrollment = await seed_enrollment(session)
     session.add(Grade(enrollment_id=enrollment.id, term=term, value=value))
-    with pytest.raises(IntegrityError):
+    with pytest.raises(CHECK_VIOLATION):
         await session.flush()
 
 
@@ -114,5 +118,5 @@ async def test_instalacion_unica(session):
     session.add(Installation(id=1, super_admin_id=admin.id))
     await session.flush()
     session.add(Installation(id=2, super_admin_id=admin.id))
-    with pytest.raises(IntegrityError):
+    with pytest.raises(CHECK_VIOLATION):
         await session.flush()

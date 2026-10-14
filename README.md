@@ -34,10 +34,20 @@ super admin → coordinadores → profesores y estudiantes. No existe registro p
 Comandos útiles:
 
 ```bash
-uv run pytest            # tests
+uv run pytest            # tests (SQLite en memoria, ~10 s)
 uv run ruff check .      # lint
 uv run ruff format .     # formateo
 uv add <paquete>         # nueva dependencia (uv add --dev <paquete> para desarrollo)
+```
+
+Tests contra **MySQL real** (misma suite; valida CHECK, DECIMAL, ENUM, bloqueos y la ida y
+vuelta de todas las migraciones). Necesita una base de pruebas **distinta** de la de trabajo
+cuyo nombre contenga `test`; se vacía en cada ejecución:
+
+```bash
+# CREATE DATABASE ia_grades_loader_test CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+TEST_DATABASE_URL="mysql+asyncmy://root:CLAVE@localhost:3306/ia_grades_loader_test" uv run pytest
+# PowerShell: $env:TEST_DATABASE_URL="mysql+asyncmy://..."; uv run pytest
 ```
 
 Migraciones (Alembic, leen `DATABASE_URL` del `.env`):
