@@ -30,7 +30,10 @@ COMMANDS = [
 
 
 def webhook_url(settings: Settings) -> str | None:
-    """URL del webhook si es utilizable (HTTPS y no local); si no, None = polling."""
+    """URL del webhook si es utilizable (HTTPS y no local); si no, None = polling.
+
+    Si solo se indica el dominio, se añade la ruta /api/v1/telegram/webhook.
+    """
     url = settings.telegram_webhook_url.strip()
     if not url:
         return None
@@ -42,6 +45,9 @@ def webhook_url(settings: Settings) -> str | None:
             url,
         )
         return None
+    if parsed.path in ("", "/"):
+        # Solo se indicó el dominio (p. ej. el de ngrok): se completa con la ruta del webhook
+        return url.rstrip("/") + f"{settings.api_v1_prefix}/telegram/webhook"
     return url
 
 

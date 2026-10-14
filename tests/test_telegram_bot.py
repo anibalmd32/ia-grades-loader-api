@@ -149,6 +149,9 @@ def test_partir_mensajes_largos():
             "https://abc.ngrok-free.app/api/v1/telegram/webhook",
             "https://abc.ngrok-free.app/api/v1/telegram/webhook",
         ),
+        # Solo el dominio: se completa con la ruta del webhook
+        ("https://abc.ngrok-free.app", "https://abc.ngrok-free.app/api/v1/telegram/webhook"),
+        ("https://abc.ngrok-free.app/", "https://abc.ngrok-free.app/api/v1/telegram/webhook"),
     ],
 )
 def test_url_de_webhook(url, expected):
