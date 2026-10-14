@@ -7,6 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
+from app.db.session import SessionLocal
+from app.mcp.server import create_mcp
 
 DESCRIPTION = """
 API para que los profesores carguen notas (manualmente o desde Excel con ayuda de IA)
@@ -52,16 +54,17 @@ OPENAPI_TAGS = [
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     worker = None
     if get_settings().import_worker_embedded:
-        from app.db.session import SessionLocal
         from app.worker import ImportWorker
 
         worker = ImportWorker(SessionLocal)
         await worker.start()
     try:
-        yield
+        # El servidor MCP montado en /mcp necesita su propio lifespan (sesiones HTTP)
+        async with app.state.mcp_app.lifespan(app):
+            yield
     finally:
         if worker is not None:
             await worker.stop()
@@ -92,6 +95,10 @@ def create_app() -> FastAPI:
 
     register_error_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    # Servidor MCP con las herramientas de notas del estudiante (Streamable HTTP en /mcp)
+    app.state.mcp_app = create_mcp(SessionLocal).http_app(path="/")
+    app.mount("/mcp", app.state.mcp_app)
     return app
 
 

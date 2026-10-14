@@ -49,6 +49,20 @@ uv run alembic check                                 # verificar que modelos y m
 uv run alembic upgrade head --sql                    # ver el SQL sin ejecutarlo
 ```
 
+## Servidor MCP (consulta de notas para clientes de IA)
+
+La API expone un servidor [MCP](https://modelcontextprotocol.io) (FastMCP, transporte
+Streamable HTTP) en `http://localhost:8000/mcp/` con dos herramientas de solo lectura:
+`resumen_de_notas` y `notas_de_materia`. Un cliente MCP se conecta enviando el token de un
+**estudiante** (el que devuelve `POST /api/v1/auth/login/student`):
+
+```
+Authorization: Bearer <access_token>
+```
+
+Las herramientas solo devuelven las notas del dueño del token; tokens de personal,
+revocados o caducados se rechazan con 401.
+
 ## Estructura
 
 ```
