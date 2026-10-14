@@ -4,11 +4,18 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from app.ai.client import LLMClient, get_llm
 from app.api.deps import DbSession, require_roles
 from app.models import Role, User
 from app.schemas.academic import SubjectRead
-from app.schemas.grades import StudentOverview, StudentSubjectGrades, TermGrade
-from app.services import student_grades
+from app.schemas.grades import (
+    ChatRequest,
+    ChatResponse,
+    StudentOverview,
+    StudentSubjectGrades,
+    TermGrade,
+)
+from app.services import chat, student_grades
 from app.services.student_grades import SubjectGrades
 
 router = APIRouter(prefix="/student", tags=["Estudiante"])
@@ -39,3 +46,20 @@ async def my_subjects(student: Student, db: DbSession) -> StudentOverview:
 @router.get("/subjects/{subject_id}", summary="Detalle de una materia")
 async def my_subject(subject_id: int, student: Student, db: DbSession) -> StudentSubjectGrades:
     return _to_schema(await student_grades.student_subject(db, student.id, subject_id))
+
+
+@router.post("/chat", summary="Preguntar por mis notas en lenguaje natural")
+async def ask_about_my_grades(
+    data: ChatRequest,
+    student: Student,
+    db: DbSession,
+    llm: Annotated[LLMClient, Depends(get_llm)],
+) -> ChatResponse:
+    """La IA responde usando **solo las notas del estudiante autenticado** (p. ej. «¿en qué
+    materia voy peor?», «¿cuánto necesito en el 3er lapso para aprobar Física?»).
+
+    La API no guarda la conversación: para que la IA tenga contexto, envía en `history`
+    los mensajes anteriores (`user` / `assistant`).
+    """
+    answer = await chat.ask(db, llm, student, data.message, data.history)
+    return ChatResponse(answer=answer)

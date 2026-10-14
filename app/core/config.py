@@ -44,6 +44,12 @@ class Settings(BaseSettings):
     llm_temperature: float = 0.0
     llm_timeout_seconds: float = 60.0
     llm_max_retries: int = 2
+    # Mensajes previos de la conversación que se reenvían al modelo en el chat
+    chat_max_history: int = 10
+
+    # --- Reglas académicas ---
+    # Nota mínima para aprobar (la usa la IA para responder "¿voy aprobando?")
+    passing_grade: float = 10
 
     # --- Telegram ---
     telegram_bot_token: SecretStr = SecretStr("")

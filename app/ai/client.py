@@ -7,7 +7,9 @@ Nada en este módulo es específico de un proveedor.
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from functools import lru_cache
+from typing import Any
 
 from openai import AsyncOpenAI, OpenAIError
 from pydantic import BaseModel, ValidationError
@@ -68,6 +70,55 @@ class LLMClient:
                     },
                 ]
         raise LLMError("La IA devolvió una respuesta con formato inválido")
+
+    async def run_tools(
+        self,
+        messages: list[dict],
+        tools: list[dict],
+        call_tool: Callable[[str, dict[str, Any]], Awaitable[dict[str, Any]]],
+        max_rounds: int = 4,
+    ) -> str:
+        """Conversación con herramientas (function calling).
+
+        El modelo puede pedir herramientas; el servidor las ejecuta con `call_tool` y le
+        devuelve el resultado, hasta que responde con texto (o se agotan las rondas).
+        """
+        if not self.settings.llm_enabled:
+            raise LLMNotConfiguredError
+        messages = list(messages)
+        for _ in range(max_rounds):
+            try:
+                response = await self._client.chat.completions.create(
+                    model=self.settings.llm_model,
+                    messages=messages,
+                    temperature=self.settings.llm_temperature,
+                    tools=tools,
+                )
+            except OpenAIError as exc:
+                logger.exception("Error llamando al LLM (%s)", self.settings.llm_provider)
+                raise LLMError("No se pudo contactar con el servicio de IA") from exc
+            if not response.choices:
+                raise LLMError("La IA devolvió una respuesta vacía")
+            message = response.choices[0].message
+            if not message.tool_calls:
+                if not message.content:
+                    raise LLMError("La IA devolvió una respuesta vacía")
+                return message.content
+            messages.append(message.model_dump(exclude_none=True))
+            for call in message.tool_calls:
+                try:
+                    args = json.loads(call.function.arguments or "{}")
+                    result = await call_tool(call.function.name, args)
+                except (json.JSONDecodeError, ValidationError, KeyError) as exc:
+                    result = {"error": f"Llamada inválida a la herramienta: {exc}"}
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.id,
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                )
+        raise LLMError("La IA no llegó a una respuesta")
 
     async def _chat(self, messages: list[dict]) -> str:
         try:
