@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_valida
 from app.models.enrollment import GRADE_DECIMALS, MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
 from app.schemas.academic import SubjectRead
 from app.services.chat import ChatMessage as ChatMessageIn
+from app.services.student_grades import Standing
 
 Term = Annotated[int, Field(ge=1, le=TERMS_PER_SEMESTER, description="Lapso (1 a 3)")]
 
@@ -108,11 +109,27 @@ class ImportPreview(BaseModel):
     )
 
 
+class SubjectProjection(BaseModel):
+    """Situación de la materia: definitiva = promedio simple de los 3 lapsos."""
+
+    standing: Standing = Field(
+        description="passed / failed = materia cerrada; secured = aprueba aunque saque la "
+        "nota mínima en lo que falta; in_progress = aún depende de los lapsos pendientes; "
+        "impossible = ni con la nota máxima llega a la aprobatoria"
+    )
+    final_grade: GradeNumber | None = Field(description="Definitiva (solo con los 3 lapsos)")
+    pending_terms: list[int] = Field(description="Lapsos sin nota")
+    needed_average: GradeNumber | None = Field(
+        description="Nota mínima (promedio) que necesita en los lapsos pendientes para aprobar"
+    )
+
+
 class StudentSubjectGrades(BaseModel):
     subject: SubjectRead
     teachers: list[str] = Field(description="Profesores que imparten la materia")
     grades: list[TermGrade] = Field(description="Siempre un elemento por lapso, en orden")
     average: GradeNumber | None = Field(description="Promedio de las notas cargadas")
+    projection: SubjectProjection
 
 
 class StudentOverview(BaseModel):

@@ -62,3 +62,65 @@ async def test_estudiante_sin_materias(client, login_as):
 async def test_solo_estudiantes(client, login_as, role):
     headers = await login_as(role, email="x@uni.edu")
     assert (await client.get("/student/subjects", headers=headers)).status_code == 403
+
+
+# --- Proyección: definitiva = promedio simple, se aprueba con 10 --------------
+
+
+def D(value):  # noqa: N802
+    from decimal import Decimal
+
+    return None if value is None else Decimal(str(value))
+
+
+@pytest.mark.parametrize(
+    ("grades", "standing", "final", "needed"),
+    [
+        # Falta un lapso: (30 - 17.5) / 1 = 12.5
+        ((8, 9.5, None), "in_progress", None, "12.50"),
+        # Faltan dos: (30 - 9) / 2 = 10.5
+        ((9, None, None), "in_progress", None, "10.50"),
+        # Sin notas: necesita 10 de promedio
+        ((None, None, None), "in_progress", None, "10.00"),
+        # Redondeo hacia arriba: (30 - 19.99) / 1 = 10.01; (30 - 20.005) no aplica (2 dec.)
+        ((10, 9.99, None), "in_progress", None, "10.01"),
+        # Aprueba aunque saque 1: (30 - 29) / 1 = 1
+        ((15, 14, None), "secured", None, None),
+        # Ni con 20 aprueba: (30 - 2) / 1 = 28
+        ((1, 1, None), "impossible", None, None),
+        # Cerrada
+        ((10, 10, 10), "passed", "10.00", None),
+        ((9, 10, 10), "failed", "9.67", None),
+    ],
+)
+def test_proyeccion(grades, standing, final, needed):
+    from app.services.student_grades import project
+
+    result = project({t: D(v) for t, v in enumerate(grades, start=1)})
+    assert result.standing == standing
+    assert result.final_grade == D(final)
+    assert result.needed_average == D(needed)
+    assert result.pending_terms == [t for t, v in enumerate(grades, start=1) if v is None]
+
+
+def test_proyeccion_respeta_la_nota_aprobatoria_configurada(monkeypatch):
+    from app.core.config import get_settings
+    from app.services.student_grades import project
+
+    monkeypatch.setattr(get_settings(), "passing_grade", 12)
+    assert project({1: D(12), 2: D(12), 3: None}).needed_average == D("12.00")
+
+
+async def test_la_api_devuelve_la_proyeccion(client, campus):
+    ana = campus["students"]["Ana"]
+    body = (await client.get("/student/subjects", headers=ana["headers"])).json()
+    fis = next(s for s in body["subjects"] if s["subject"]["code"] == "FIS-101")
+    # Física: 10 en el lapso 1 -> faltan 2 lapsos con promedio (30 - 10) / 2 = 10
+    assert fis["projection"] == {
+        "standing": "in_progress",
+        "final_grade": None,
+        "pending_terms": [2, 3],
+        "needed_average": 10.0,
+    }
+    mat = next(s for s in body["subjects"] if s["subject"]["code"] == "MAT-101")
+    assert mat["projection"]["standing"] == "secured"  # 15 + 18.5 ya pasan de 30 - 20

@@ -13,6 +13,7 @@ from app.schemas.grades import (
     ChatResponse,
     StudentOverview,
     StudentSubjectGrades,
+    SubjectProjection,
     TermGrade,
 )
 from app.services import chat, student_grades
@@ -29,6 +30,7 @@ def _to_schema(item: SubjectGrades) -> StudentSubjectGrades:
         teachers=item.teachers,
         grades=[TermGrade(term=t, value=v) for t, v in item.grades.items()],
         average=item.average,
+        projection=SubjectProjection.model_validate(item.projection, from_attributes=True),
     )
 
 

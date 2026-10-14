@@ -26,6 +26,9 @@ async def test_resumen_de_notas(campus, session):
         "lapso_3": None,
     }
     assert by_code["MAT-101"]["promedio"] == 16.75
+    assert by_code["FIS-101"]["situacion"]["nota_minima_necesaria_en_cada_lapso_pendiente"] == 10
+    assert by_code["FIS-101"]["situacion"]["lapsos_pendientes"] == [2, 3]
+    assert by_code["MAT-101"]["situacion"]["estado"].startswith("aprobada asegurada")
     assert result["promedio_general"] == 13.38
     json.dumps(result)  # serializable para el modelo
 

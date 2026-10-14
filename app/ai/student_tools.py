@@ -17,11 +17,30 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.models.enrollment import MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
 from app.services import student_grades
-from app.services.student_grades import SubjectGrades
+from app.services.student_grades import Standing, SubjectGrades
 
 
 def _number(value: Decimal | None) -> float | None:
     return None if value is None else float(value)
+
+
+_STANDING_TEXT = {
+    Standing.PASSED: "aprobada (todos los lapsos cargados)",
+    Standing.FAILED: "reprobada (todos los lapsos cargados)",
+    Standing.SECURED: "aprobada asegurada: aprueba aunque saque la nota mínima en lo que falta",
+    Standing.IN_PROGRESS: "en curso: depende de los lapsos pendientes",
+    Standing.IMPOSSIBLE: "ya no puede aprobar: ni con 20 en lo que falta llega a la aprobatoria",
+}
+
+
+def _situation(item: SubjectGrades) -> dict[str, Any]:
+    p = item.projection
+    return {
+        "estado": _STANDING_TEXT[p.standing],
+        "definitiva": _number(p.final_grade),
+        "lapsos_pendientes": p.pending_terms,
+        "nota_minima_necesaria_en_cada_lapso_pendiente": _number(p.needed_average),
+    }
 
 
 def _subject_dict(item: SubjectGrades) -> dict[str, Any]:
@@ -32,6 +51,8 @@ def _subject_dict(item: SubjectGrades) -> dict[str, Any]:
         "profesores": item.teachers,
         "notas_por_lapso": {f"lapso_{term}": _number(value) for term, value in item.grades.items()},
         "promedio": _number(item.average),
+        # Calculada por el servidor: el modelo debe usar este dato, no hacer la cuenta
+        "situacion": _situation(item),
     }
 
 
@@ -123,8 +144,9 @@ TOOLS: dict[str, StudentTool] = {
         StudentTool(
             name="resumen_de_notas",
             description="Devuelve todas las materias del estudiante con su nota de cada "
-            "lapso (null si aún no se ha cargado), el promedio de cada materia, el promedio "
-            "general y la escala de notas (incluida la nota aprobatoria).",
+            "lapso (null si aún no se ha cargado), el promedio de cada materia, su situación "
+            "(aprobada, reprobada, en curso, asegurada o imposible y la nota mínima necesaria "
+            "en los lapsos pendientes), el promedio general y la escala de notas.",
             args=NoArgs,
             handler=resumen_de_notas,
         ),
