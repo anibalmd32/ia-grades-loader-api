@@ -24,6 +24,17 @@ async def get(db: AsyncSession, student_id: int, conversation_id: int) -> Conver
     return conversation
 
 
+async def current(db: AsyncSession, student_id: int, channel: ChatChannel) -> Conversation:
+    """La conversación más reciente del canal, o una nueva si no hay (uso en Telegram)."""
+    latest = await db.scalar(
+        select(Conversation)
+        .where(Conversation.student_id == student_id, Conversation.channel == channel)
+        .order_by(Conversation.updated_at.desc(), Conversation.id.desc())
+        .limit(1)
+    )
+    return latest or await create(db, student_id, channel)
+
+
 async def list_for(
     db: AsyncSession, student_id: int, channel: ChatChannel, limit: int, offset: int
 ) -> tuple[list[Conversation], int]:

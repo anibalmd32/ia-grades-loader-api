@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     telegram_webhook_url: str = ""
     telegram_webhook_secret: SecretStr = SecretStr("")
     telegram_link_code_ttl_minutes: int = 10
+    # false para levantar la API sin el bot (p. ej. una segunda instancia: en modo polling
+    # solo puede haber un proceso recibiendo mensajes)
+    telegram_bot_embedded: bool = True
 
     # --- Carga de archivos ---
     max_upload_size_mb: int = 10

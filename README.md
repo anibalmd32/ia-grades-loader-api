@@ -127,5 +127,15 @@ Para DeepSeek:
      y un secreto en `TELEGRAM_WEBHOOK_SECRET`; la API registra el webhook al arrancar.
      Para probar el webhook en local puedes exponer el puerto con `ngrok http 8000`.
 
+**Cómo probar el bot de punta a punta:**
+
+1. Levanta la API (`uv run fastapi dev app/main.py`). En los logs verás si usa polling o webhook.
+2. Inicia sesión como estudiante y llama a `POST /api/v1/student/telegram/link`.
+3. Abre en el móvil la `url` devuelta (`https://t.me/<bot>?start=<código>`) y pulsa **Iniciar**.
+4. Escribe al bot en lenguaje natural («¿cómo voy?»). Comandos: `/nueva`, `/desvincular`, `/ayuda`.
+
+En modo polling solo puede haber **un** proceso con el bot activo; en instancias extra de la
+API usa `TELEGRAM_BOT_EMBEDDED=false`.
+
 No hace falta ningún "chat id" en el `.env`: cada estudiante vincula su cuenta desde la app, que
 genera un enlace `t.me/<bot>?start=<código>`, y el chat id se guarda en la base de datos.

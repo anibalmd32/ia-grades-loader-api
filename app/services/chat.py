@@ -10,10 +10,10 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import LLMClient
-from app.ai.prompts import STUDENT_CHAT_SYSTEM
+from app.ai.prompts import STUDENT_CHAT_SYSTEM, TELEGRAM_STYLE
 from app.ai.student_tools import TOOLS
 from app.core.config import get_settings
-from app.models import Conversation, MessageRole, User
+from app.models import ChatChannel, Conversation, MessageRole, User
 from app.services import conversations
 
 
@@ -25,8 +25,11 @@ async def _prepare(
         db, conversation.id, last=get_settings().chat_max_history
     )
     await conversations.add_message(db, conversation, MessageRole.USER, question)
+    system = STUDENT_CHAT_SYSTEM.format(nombre=student.full_name)
+    if conversation.channel == ChatChannel.TELEGRAM:
+        system += TELEGRAM_STYLE
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": STUDENT_CHAT_SYSTEM.format(nombre=student.full_name)},
+        {"role": "system", "content": system},
         *({"role": m.role.value, "content": m.content} for m in history),
         {"role": "user", "content": question},
     ]

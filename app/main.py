@@ -1,3 +1,4 @@
+import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -9,6 +10,8 @@ from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.db.session import SessionLocal
 from app.mcp.server import create_mcp
+
+logger = logging.getLogger(__name__)
 
 DESCRIPTION = """
 API para que los profesores carguen notas (manualmente o desde Excel con ayuda de IA)
@@ -55,17 +58,32 @@ OPENAPI_TAGS = [
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    settings = get_settings()
     worker = None
-    if get_settings().import_worker_embedded:
+    if settings.import_worker_embedded:
         from app.worker import ImportWorker
 
         worker = ImportWorker(SessionLocal)
         await worker.start()
+
+    app.state.telegram_bot = None
+    if settings.telegram_enabled and settings.telegram_bot_embedded:
+        from app.telegram.bot import TelegramBot
+
+        try:
+            bot = TelegramBot(settings, SessionLocal)
+            await bot.start()
+            app.state.telegram_bot = bot
+        except Exception:
+            # Sin Telegram (p. ej. sin internet o token inválido) la API sigue funcionando
+            logger.exception("No se pudo iniciar el bot de Telegram")
     try:
         # El servidor MCP montado en /mcp necesita su propio lifespan (sesiones HTTP)
         async with app.state.mcp_app.lifespan(app):
             yield
     finally:
+        if app.state.telegram_bot is not None:
+            await app.state.telegram_bot.stop()
         if worker is not None:
             await worker.stop()
 
