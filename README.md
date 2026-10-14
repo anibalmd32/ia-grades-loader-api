@@ -35,6 +35,7 @@ Comandos útiles:
 
 ```bash
 uv run pytest            # tests (SQLite en memoria, ~10 s)
+uv run pytest --cov      # tests + cobertura (mínimo 90 %)
 uv run ruff check .      # lint
 uv run ruff format .     # formateo
 uv add <paquete>         # nueva dependencia (uv add --dev <paquete> para desarrollo)

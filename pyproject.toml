@@ -23,6 +23,7 @@ dev = [
     "aiosqlite>=0.22.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
     "ruff>=0.17.0",
 ]
 
@@ -40,3 +41,14 @@ filterwarnings = ["error"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app"]
+
+[tool.coverage.run]
+source = ["app"]
+# SQLAlchemy async ejecuta el código en greenlets: sin esto la cobertura sale falsamente baja
+concurrency = ["greenlet", "thread"]
+
+[tool.coverage.report]
+skip_covered = true
+show_missing = true
+# Con --cov falla si la cobertura baja de aquí
+fail_under = 90
