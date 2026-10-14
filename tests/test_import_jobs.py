@@ -3,13 +3,26 @@ from datetime import timedelta
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
-from app.models import ImportJob, JobStatus, Role
+from app.db.base import Base
+from app.models import (
+    Enrollment,
+    ImportJob,
+    JobStatus,
+    Nationality,
+    Role,
+    Semester,
+    Subject,
+    TeacherSubject,
+    User,
+)
 from app.models.import_job import utcnow
-from app.services.import_jobs import claim_next, recover_stale
+from app.services.import_jobs import claim_next, enqueue, recover_stale
 from app.worker import ImportWorker
-from tests.import_helpers import FakeLLM, entry, upload
+from tests.import_helpers import SAMPLE, FakeLLM, entry, upload
 
 
 async def wait_until(predicate, timeout: float = 5.0) -> None:
@@ -26,36 +39,81 @@ async def all_finished(sessionmaker) -> bool:
     return bool(statuses) and statuses <= {JobStatus.DONE, JobStatus.FAILED}
 
 
-@pytest.mark.skip(
-    reason="PENDIENTE: se cuelga de forma intermitente en el 3er trabajo (también con un solo "
-    "worker). Sin diagnosticar si es un fallo real o del montaje de tests (SQLite en memoria). "
-    "Ver tarea en el tablero de Notion."
-)
-async def test_worker_procesa_la_cola_en_paralelo_sin_duplicar(client, course, sessionmaker):
+@pytest.fixture
+async def file_sessionmaker(tmp_path):
+    """SQLite en un archivo con una conexión por sesión, como MySQL en producción.
+
+    La base en memoria del resto de tests comparte UNA conexión entre todas las sesiones:
+    con dos workers a la vez, el rollback de una sesión deshacía el UPDATE pendiente de la
+    otra y el trabajo quedaba en 'processing'. Era un artefacto de los tests, no del worker.
+    """
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'cola.db'}",
+        poolclass=NullPool,
+        connect_args={"timeout": 30},
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+async def seed_course(sessionmaker) -> tuple[int, int]:
+    """Profesor con MAT-101 y la estudiante V-1 matriculada. Devuelve (profesor, materia)."""
+    async with sessionmaker() as db:
+        subject = Subject(code="MAT-101", name="Matemática I", semester=Semester(name="2026-I"))
+        teacher = User(role=Role.TEACHER, full_name="Pedro", email="p@uni.edu", password_hash="x")
+        ana = User(
+            role=Role.STUDENT,
+            full_name="Ana",
+            nationality=Nationality.VENEZOLANO,
+            cedula=1,
+            password_hash="x",
+        )
+        db.add_all([subject, teacher, ana])
+        await db.flush()
+        db.add_all(
+            [
+                TeacherSubject(teacher_id=teacher.id, subject_id=subject.id),
+                Enrollment(student_id=ana.id, subject_id=subject.id),
+            ]
+        )
+        await db.commit()
+        return teacher.id, subject.id
+
+
+async def test_worker_procesa_la_cola_en_paralelo_sin_duplicar(file_sessionmaker):
+    teacher_id, subject_id = await seed_course(file_sessionmaker)
     fake = FakeLLM({"grades": [entry(cedula="V-1", term=1, value=15)]})
     job_ids = []
-    for _ in range(3):
-        response = await upload(client, course)
-        assert response.status_code == 202
-        job_ids.append(response.json()["id"])
+    async with file_sessionmaker() as db:
+        for n in range(4):
+            job = await enqueue(
+                db,
+                teacher_id=teacher_id,
+                subject_id=subject_id,
+                file_name=f"notas-{n}.xlsx",
+                content=SAMPLE,
+                default_term=None,
+            )
+            job_ids.append(job.id)
 
-    worker = ImportWorker(sessionmaker, lambda: fake, concurrency=2, poll_seconds=0.05)
+    worker = ImportWorker(file_sessionmaker, lambda: fake, concurrency=2, poll_seconds=0.05)
     await worker.start()
     try:
-        await wait_until(lambda: all_finished(sessionmaker))
+        await wait_until(lambda: all_finished(file_sessionmaker), timeout=20)
     finally:
         await worker.stop()
 
-    assert len(fake.calls) == 3  # cada trabajo se procesó una sola vez
-    for job_id in job_ids:
-        job = (await client.get(f"/teacher/import-jobs/{job_id}", headers=course["headers"])).json()
-        assert job["status"] == "done"
-        assert job["result"]["summary"] == {"ok": 1, "warning": 0, "error": 0}
-        assert job["finished_at"].endswith("Z") or job["finished_at"].endswith("+00:00")
-
-    async with sessionmaker() as db:
-        contents = list(await db.scalars(select(ImportJob.file_content)))
-    assert contents == [None, None, None]  # el archivo se borra al terminar
+    assert len(fake.calls) == 4  # cada trabajo se procesó una sola vez
+    async with file_sessionmaker() as db:
+        jobs = list(await db.scalars(select(ImportJob)))
+    assert sorted(j.id for j in jobs) == sorted(job_ids)
+    for job in jobs:
+        assert job.status == JobStatus.DONE, job.error
+        assert job.attempts == 1
+        assert job.result["summary"] == {"ok": 1, "warning": 0, "error": 0}
+        assert job.file_content is None  # el archivo se borra al terminar
 
 
 async def test_un_trabajo_solo_se_reclama_una_vez(client, course, sessionmaker):
