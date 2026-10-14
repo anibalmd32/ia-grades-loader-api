@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
     # Mensajes previos de la conversación que se reenvían al modelo en el chat
     chat_max_history: int = 10
+    # Preguntas a la IA por minuto y estudiante (app + Telegram). 0 = sin límite
+    chat_rate_limit_per_minute: int = 10
 
     # --- Reglas académicas ---
     # Nota mínima para aprobar (la usa la IA para responder "¿voy aprobando?")

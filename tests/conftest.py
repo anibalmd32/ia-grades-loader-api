@@ -31,6 +31,15 @@ def _fast_password_hashing():
     security._password_hash = original
 
 
+@pytest.fixture(autouse=True)
+def _reset_rate_limits():
+    from app.services.chat import question_limiter
+
+    question_limiter.reset()
+    yield
+    question_limiter.reset()
+
+
 @pytest.fixture
 async def sessionmaker() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     """SQLite en memoria con el esquema completo, compartida por todas las conexiones."""

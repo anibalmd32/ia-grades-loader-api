@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.client import LLMClient
 from app.core.errors import AppError
+from app.core.rate_limit import RateLimitedError
 from app.models import ChatChannel
 from app.services import chat, conversations, telegram_link
 
@@ -118,6 +119,8 @@ class TelegramBotService:
             conversation = await conversations.current(db, student.id, ChatChannel.TELEGRAM)
             try:
                 answer = await chat.ask(db, self.llm_factory(), student, conversation, text)
+            except RateLimitedError as exc:
+                return html.escape(exc.detail)
             except AppError as exc:
                 logger.warning("Fallo respondiendo en Telegram al chat %s: %s", chat_id, exc)
                 return "No pude responder en este momento. Inténtalo de nuevo en unos minutos."

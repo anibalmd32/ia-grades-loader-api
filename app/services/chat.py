@@ -13,14 +13,19 @@ from app.ai.client import LLMClient
 from app.ai.prompts import STUDENT_CHAT_SYSTEM, TELEGRAM_STYLE
 from app.ai.student_tools import TOOLS
 from app.core.config import get_settings
+from app.core.rate_limit import RateLimiter
 from app.models import ChatChannel, Conversation, MessageRole, User
 from app.services import conversations
+
+# Preguntas por minuto y estudiante, sumando app y Telegram (cada una llama a la IA)
+question_limiter = RateLimiter(lambda: get_settings().chat_rate_limit_per_minute)
 
 
 async def _prepare(
     db: AsyncSession, student: User, conversation: Conversation, question: str
 ) -> tuple[list[dict[str, Any]], Any]:
     """Carga el contexto, guarda la pregunta y devuelve (mensajes, ejecutor de herramientas)."""
+    question_limiter.hit(student.id)
     history = await conversations.messages(
         db, conversation.id, last=get_settings().chat_max_history
     )
