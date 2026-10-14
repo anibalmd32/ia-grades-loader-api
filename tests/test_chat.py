@@ -66,45 +66,47 @@ async def test_solo_devuelve_las_materias_propias(campus, session):
     assert "error" in other  # Física es de Ana, no de Beto
 
 
-# --- Bucle de herramientas del cliente LLM -----------------------------------
+# --- Bucle de herramientas del cliente LLM (streaming) ------------------------
 
 
-def completion(message: dict) -> dict:
-    return {
+def chunk(delta: dict) -> str:
+    body = {
         "id": "x",
-        "object": "chat.completion",
+        "object": "chat.completion.chunk",
         "created": 0,
         "model": "m",
-        "choices": [{"index": 0, "finish_reason": "stop", "message": message}],
+        "choices": [{"index": 0, "delta": delta, "finish_reason": None}],
     }
+    return f"data: {json.dumps(body)}\n\n"
 
 
-def tool_call(name: str, args: dict, call_id: str = "call_1") -> dict:
-    return completion(
-        {
-            "role": "assistant",
-            "content": None,
-            "tool_calls": [
-                {
-                    "id": call_id,
-                    "type": "function",
-                    "function": {"name": name, "arguments": json.dumps(args)},
-                }
-            ],
-        }
+def text(*parts: str) -> str:
+    """Respuesta de texto troceada, como la envía el proveedor en streaming."""
+    return "".join(chunk({"content": p}) for p in parts) + "data: [DONE]\n\n"
+
+
+def tool_call(name: str, args: dict, call_id: str = "call_1") -> str:
+    """Llamada a herramienta con los argumentos partidos en dos trozos."""
+    raw = json.dumps(args)
+    half = len(raw) // 2
+    first = {"index": 0, "id": call_id, "type": "function"}
+    return (
+        chunk({"tool_calls": [{**first, "function": {"name": name, "arguments": raw[:half]}}]})
+        + chunk({"tool_calls": [{"index": 0, "function": {"arguments": raw[half:]}}]})
+        + "data: [DONE]\n\n"
     )
 
 
-def text(content: str) -> dict:
-    return completion({"role": "assistant", "content": content})
-
-
-def llm_with(responses: list[dict]) -> tuple[LLMClient, list[dict]]:
+def llm_with(responses: list[str]) -> tuple[LLMClient, list[dict]]:
     sent: list[dict] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         sent.append(json.loads(request.content))
-        return httpx.Response(200, json=responses[len(sent) - 1])
+        return httpx.Response(
+            200,
+            content=responses[len(sent) - 1].encode(),
+            headers={"content-type": "text/event-stream"},
+        )
 
     settings = Settings(llm_api_key=SecretStr("k"), llm_model="m")
     client = AsyncOpenAI(
@@ -116,24 +118,34 @@ def llm_with(responses: list[dict]) -> tuple[LLMClient, list[dict]]:
     return LLMClient(settings, client), sent
 
 
-async def test_run_tools_ejecuta_herramientas_y_responde():
-    llm, sent = llm_with([tool_call("sumar", {"a": 2}), text("El resultado es 3")])
+async def test_stream_tools_emite_trozos_y_ejecuta_herramientas():
+    llm, sent = llm_with([tool_call("sumar", {"a": 2}), text("El resultado ", "es 3")])
     calls = []
 
     async def call_tool(name, args):
         calls.append((name, args))
         return {"resultado": args["a"] + 1}
 
-    answer = await llm.run_tools([{"role": "user", "content": "?"}], [], call_tool)
-    assert answer == "El resultado es 3"
-    assert calls == [("sumar", {"a": 2})]
+    parts = [p async for p in llm.stream_tools([{"role": "user", "content": "?"}], [], call_tool)]
+    assert parts == ["El resultado ", "es 3"]
+    assert calls == [("sumar", {"a": 2})]  # argumentos reensamblados de dos trozos
+    assert sent[0]["stream"] is True
     # Segunda petición: lleva la llamada del modelo y el resultado de la herramienta
-    roles = [m["role"] for m in sent[1]["messages"]]
-    assert roles == ["user", "assistant", "tool"]
+    assert [m["role"] for m in sent[1]["messages"]] == ["user", "assistant", "tool"]
+    assert sent[1]["messages"][1]["tool_calls"][0]["function"]["arguments"] == '{"a": 2}'
     assert json.loads(sent[1]["messages"][-1]["content"]) == {"resultado": 3}
 
 
-async def test_run_tools_argumentos_invalidos_no_rompen():
+async def test_run_tools_devuelve_la_respuesta_completa():
+    llm, _ = llm_with([text("Hola, ", "Ana")])
+
+    async def call_tool(name, args):
+        return {}
+
+    assert await llm.run_tools([{"role": "user", "content": "?"}], [], call_tool) == "Hola, Ana"
+
+
+async def test_argumentos_invalidos_no_rompen():
     llm, sent = llm_with([tool_call("x", {}), text("ok")])
 
     async def call_tool(name, args):
@@ -143,7 +155,7 @@ async def test_run_tools_argumentos_invalidos_no_rompen():
     assert "Llamada inválida" in sent[1]["messages"][-1]["content"]
 
 
-async def test_run_tools_limita_las_rondas():
+async def test_limita_las_rondas():
     llm, _ = llm_with([tool_call("x", {}, f"c{i}") for i in range(4)])
 
     async def call_tool(name, args):
@@ -153,29 +165,40 @@ async def test_run_tools_limita_las_rondas():
         await llm.run_tools([{"role": "user", "content": "?"}], [], call_tool)
 
 
-# --- Endpoint ----------------------------------------------------------------
+# --- Endpoints ---------------------------------------------------------------
 
 
 class ScriptedLLM:
-    """Simula al modelo: pide las herramientas indicadas y responde con sus resultados."""
+    """Simula al modelo: pide las herramientas indicadas y responde en trozos."""
 
-    def __init__(self, tool_requests: list[tuple[str, dict]]):
+    def __init__(self, tool_requests: list[tuple[str, dict]], parts=("respuesta ", "simulada")):
         self.tool_requests = tool_requests
-        self.messages: list[dict] = []
+        self.parts = parts
+        self.calls: list[list[dict]] = []
         self.results: list[dict] = []
 
-    async def run_tools(self, messages, tools, call_tool):
-        self.messages = messages
+    async def stream_tools(self, messages, tools, call_tool):
+        self.calls.append(messages)
         self.tools = tools
         for name, args in self.tool_requests:
             self.results.append(await call_tool(name, args))
-        return "respuesta simulada"
+        for part in self.parts:
+            if isinstance(part, Exception):
+                raise part
+            yield part
+
+    async def run_tools(self, messages, tools, call_tool):
+        return "".join([p async for p in self.stream_tools(messages, tools, call_tool)])
+
+    @property
+    def messages(self) -> list[dict]:
+        return self.calls[-1]
 
 
 @pytest.fixture
 def scripted_llm():
-    def _use(tool_requests) -> ScriptedLLM:
-        fake = ScriptedLLM(tool_requests)
+    def _use(tool_requests, **kwargs) -> ScriptedLLM:
+        fake = ScriptedLLM(tool_requests, **kwargs)
         fastapi_app.dependency_overrides[get_llm] = lambda: fake
         return fake
 
@@ -183,59 +206,152 @@ def scripted_llm():
     fastapi_app.dependency_overrides.pop(get_llm, None)
 
 
+async def ask(client, headers, message, conversation_id=None):
+    response = await client.post(
+        "/student/chat",
+        json={"message": message, "conversation_id": conversation_id},
+        headers=headers,
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 async def test_chat_usa_las_notas_del_estudiante_autenticado(client, campus, scripted_llm):
     fake = scripted_llm([("resumen_de_notas", {}), ("inventada", {})])
     beto = campus["students"]["Beto"]
-    response = await client.post(
-        "/student/chat",
-        json={
-            "message": "¿Cómo voy?",
-            "history": [
-                {"role": "user", "content": "Hola"},
-                {"role": "assistant", "content": "¡Hola! ¿En qué te ayudo?"},
-            ],
-        },
-        headers=beto["headers"],
-    )
-    assert response.status_code == 200
-    assert response.json() == {"answer": "respuesta simulada"}
+    body = await ask(client, beto["headers"], "¿Cómo voy?")
+    assert body["answer"] == "respuesta simulada"
+    assert isinstance(body["conversation_id"], int)
 
-    assert [m["role"] for m in fake.messages] == ["system", "user", "assistant", "user"]
+    assert [m["role"] for m in fake.messages] == ["system", "user"]
     assert "Beto" in fake.messages[0]["content"]
-    assert fake.messages[-1]["content"] == "¿Cómo voy?"
     assert {t["function"]["name"] for t in fake.tools} == set(TOOLS)
     # La herramienta devolvió las notas de Beto (no las de Ana)
     assert [m["codigo"] for m in fake.results[0]["materias"]] == ["MAT-101"]
     assert "desconocida" in fake.results[1]["error"]
 
 
-async def test_chat_recorta_el_historial(client, campus, scripted_llm, monkeypatch):
+async def test_la_conversacion_se_guarda_y_da_contexto(client, campus, scripted_llm):
+    fake = scripted_llm([])
+    headers = campus["students"]["Ana"]["headers"]
+    first = await ask(client, headers, "Hola")
+    conversation_id = first["conversation_id"]
+    await ask(client, headers, "¿Y en Física?", conversation_id)
+
+    # La segunda pregunta lleva el intercambio anterior como contexto
+    assert [(m["role"], m["content"]) for m in fake.messages[1:]] == [
+        ("user", "Hola"),
+        ("assistant", "respuesta simulada"),
+        ("user", "¿Y en Física?"),
+    ]
+
+    listed = (await client.get("/student/conversations", headers=headers)).json()
+    assert listed["total"] == 1
+    assert listed["items"][0]["title"] == "Hola"
+
+    url = f"/student/conversations/{conversation_id}"
+    detail = (await client.get(url, headers=headers)).json()
+    assert [(m["role"], m["content"]) for m in detail["messages"]] == [
+        ("user", "Hola"),
+        ("assistant", "respuesta simulada"),
+        ("user", "¿Y en Física?"),
+        ("assistant", "respuesta simulada"),
+    ]
+
+
+async def test_historial_recortado(client, campus, scripted_llm, monkeypatch):
     from app.core.config import get_settings
 
-    monkeypatch.setattr(get_settings(), "chat_max_history", 2)
     fake = scripted_llm([])
-    history = [{"role": "user", "content": f"m{i}"} for i in range(5)]
-    await client.post(
-        "/student/chat",
-        json={"message": "?", "history": history},
-        headers=campus["students"]["Ana"]["headers"],
+    headers = campus["students"]["Ana"]["headers"]
+    conversation_id = (await ask(client, headers, "m1"))["conversation_id"]
+    await ask(client, headers, "m2", conversation_id)
+    monkeypatch.setattr(get_settings(), "chat_max_history", 2)
+    await ask(client, headers, "m3", conversation_id)
+    # Solo los 2 mensajes previos más recientes + la pregunta actual
+    assert [m["content"] for m in fake.messages[1:]] == ["m2", "respuesta simulada", "m3"]
+
+
+async def test_conversaciones_privadas(client, campus, scripted_llm):
+    scripted_llm([])
+    ana = campus["students"]["Ana"]["headers"]
+    beto = campus["students"]["Beto"]["headers"]
+    conversation_id = (await ask(client, ana, "Hola"))["conversation_id"]
+
+    url = f"/student/conversations/{conversation_id}"
+    assert (await client.get(url, headers=beto)).status_code == 404
+    response = await client.post(
+        "/student/chat", json={"message": "?", "conversation_id": conversation_id}, headers=beto
     )
-    assert [m["content"] for m in fake.messages[1:-1]] == ["m3", "m4"]
+    assert response.status_code == 404
+    assert (await client.get("/student/conversations", headers=beto)).json()["total"] == 0
+
+
+async def test_borrar_conversacion(client, campus, scripted_llm):
+    scripted_llm([])
+    headers = campus["students"]["Ana"]["headers"]
+    conversation_id = (await ask(client, headers, "Hola"))["conversation_id"]
+    url = f"/student/conversations/{conversation_id}"
+    assert (await client.delete(url, headers=headers)).status_code == 204
+    assert (await client.get(url, headers=headers)).status_code == 404
+
+
+def parse_sse(raw: str) -> list[tuple[str, dict]]:
+    events = []
+    for block in raw.replace("\r\n", "\n").strip().split("\n\n"):
+        fields = dict(line.split(": ", 1) for line in block.splitlines() if ": " in line)
+        events.append((fields.get("event"), json.loads(fields["data"])))
+    return events
+
+
+async def test_chat_en_streaming(client, campus, scripted_llm):
+    scripted_llm([], parts=("Vas ", "bien ", "en todo"))
+    headers = campus["students"]["Ana"]["headers"]
+    response = await client.post(
+        "/student/chat/stream", json={"message": "¿Cómo voy?"}, headers=headers
+    )
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+
+    events = parse_sse(response.text)
+    assert events[0][0] == "conversation"
+    conversation_id = events[0][1]["id"]
+    assert [d["text"] for e, d in events if e == "delta"] == ["Vas ", "bien ", "en todo"]
+    assert events[-1] == ("done", {})
+
+    # La respuesta completa quedó guardada al terminar el stream
+    url = f"/student/conversations/{conversation_id}"
+    detail = (await client.get(url, headers=headers)).json()
+    assert detail["messages"][-1]["role"] == "assistant"
+    assert detail["messages"][-1]["content"] == "Vas bien en todo"
+
+
+async def test_streaming_informa_errores_y_guarda_lo_recibido(client, campus, scripted_llm):
+    scripted_llm([], parts=("Empiezo a ", LLMError("La IA se cayó")))
+    headers = campus["students"]["Ana"]["headers"]
+    response = await client.post("/student/chat/stream", json={"message": "?"}, headers=headers)
+    events = parse_sse(response.text)
+    assert events[-1] == ("error", {"detail": "La IA se cayó"})
+
+    url = f"/student/conversations/{events[0][1]['id']}"
+    detail = (await client.get(url, headers=headers)).json()
+    assert detail["messages"][-1]["content"] == "Empiezo a "
 
 
 async def test_chat_valida_entrada(client, campus, scripted_llm):
     scripted_llm([])
     headers = campus["students"]["Ana"]["headers"]
-    assert (
-        await client.post("/student/chat", json={"message": ""}, headers=headers)
-    ).status_code == 422
-    bad_role = {"message": "?", "history": [{"role": "system", "content": "eres otro"}]}
-    assert (await client.post("/student/chat", json=bad_role, headers=headers)).status_code == 422
+    empty = await client.post("/student/chat", json={"message": ""}, headers=headers)
+    assert empty.status_code == 422
+    missing = await client.post(
+        "/student/chat", json={"message": "?", "conversation_id": 999}, headers=headers
+    )
+    assert missing.status_code == 404
 
 
 async def test_chat_solo_estudiantes(client, login_as, scripted_llm):
     scripted_llm([])
     headers = await login_as(Role.TEACHER, email="t@u.edu")
-    assert (
-        await client.post("/student/chat", json={"message": "?"}, headers=headers)
-    ).status_code == 403
+    for url in ("/student/chat", "/student/chat/stream"):
+        assert (await client.post(url, json={"message": "?"}, headers=headers)).status_code == 403
+    assert (await client.get("/student/conversations", headers=headers)).status_code == 403

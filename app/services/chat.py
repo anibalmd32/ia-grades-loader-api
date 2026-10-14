@@ -1,34 +1,33 @@
-"""Chat en lenguaje natural del estudiante sobre sus notas (API y Telegram)."""
+"""Chat en lenguaje natural del estudiante sobre sus notas (app y Telegram).
 
-from typing import Any, Literal
+El historial vive en la base de datos (tabla conversations): el cliente solo indica en qué
+conversación pregunta.
+"""
 
-from pydantic import BaseModel, Field
+from collections.abc import AsyncIterator
+from typing import Any
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import LLMClient
 from app.ai.prompts import STUDENT_CHAT_SYSTEM
 from app.ai.student_tools import TOOLS
 from app.core.config import get_settings
-from app.models import User
+from app.models import Conversation, MessageRole, User
+from app.services import conversations
 
 
-class ChatMessage(BaseModel):
-    role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=4000)
-
-
-async def ask(
-    db: AsyncSession,
-    llm: LLMClient,
-    student: User,
-    question: str,
-    history: list[ChatMessage] | None = None,
-) -> str:
-    """Responde una pregunta del estudiante usando solo sus propias notas."""
-    max_history = get_settings().chat_max_history
+async def _prepare(
+    db: AsyncSession, student: User, conversation: Conversation, question: str
+) -> tuple[list[dict[str, Any]], Any]:
+    """Carga el contexto, guarda la pregunta y devuelve (mensajes, ejecutor de herramientas)."""
+    history = await conversations.messages(
+        db, conversation.id, last=get_settings().chat_max_history
+    )
+    await conversations.add_message(db, conversation, MessageRole.USER, question)
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": STUDENT_CHAT_SYSTEM.format(nombre=student.full_name)},
-        *({"role": m.role, "content": m.content} for m in (history or [])[-max_history:]),
+        *({"role": m.role.value, "content": m.content} for m in history),
         {"role": "user", "content": question},
     ]
 
@@ -39,4 +38,36 @@ async def ask(
         # El id del estudiante sale de la sesión, nunca de los argumentos del modelo
         return await tool.run(db, student.id, args)
 
-    return await llm.run_tools(messages, [t.openai_schema() for t in TOOLS.values()], call_tool)
+    return messages, call_tool
+
+
+def _tool_schemas() -> list[dict[str, Any]]:
+    return [t.openai_schema() for t in TOOLS.values()]
+
+
+async def ask(
+    db: AsyncSession, llm: LLMClient, student: User, conversation: Conversation, question: str
+) -> str:
+    """Responde una pregunta usando solo las notas del estudiante y la guarda."""
+    messages, call_tool = await _prepare(db, student, conversation, question)
+    answer = await llm.run_tools(messages, _tool_schemas(), call_tool)
+    await conversations.add_message(db, conversation, MessageRole.ASSISTANT, answer)
+    return answer
+
+
+async def ask_stream(
+    db: AsyncSession, llm: LLMClient, student: User, conversation: Conversation, question: str
+) -> AsyncIterator[str]:
+    """Igual que ask() pero emitiendo la respuesta a medida que la escribe la IA.
+
+    Lo recibido se guarda aunque el cliente corte la conexión a mitad.
+    """
+    messages, call_tool = await _prepare(db, student, conversation, question)
+    parts: list[str] = []
+    try:
+        async for part in llm.stream_tools(messages, _tool_schemas(), call_tool):
+            parts.append(part)
+            yield part
+    finally:
+        if parts:
+            await conversations.add_message(db, conversation, MessageRole.ASSISTANT, "".join(parts))

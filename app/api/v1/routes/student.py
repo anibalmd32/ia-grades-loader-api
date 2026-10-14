@@ -1,22 +1,30 @@
 """Consulta de notas por el estudiante autenticado."""
 
+from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query, status
+from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from app.ai.client import LLMClient, get_llm
 from app.api.deps import DbSession, require_roles
-from app.models import Role, User
+from app.core.errors import AppError
+from app.models import ChatChannel, Conversation, Role, User
 from app.schemas.academic import SubjectRead
-from app.schemas.grades import (
+from app.schemas.chat import (
     ChatRequest,
     ChatResponse,
+    ConversationRead,
+    ConversationSummary,
+)
+from app.schemas.common import Page
+from app.schemas.grades import (
     StudentOverview,
     StudentSubjectGrades,
     SubjectProjection,
     TermGrade,
 )
-from app.services import chat, student_grades
+from app.services import chat, conversations, student_grades
 from app.services.student_grades import SubjectGrades
 
 router = APIRouter(prefix="/student", tags=["Estudiante"])
@@ -50,18 +58,93 @@ async def my_subject(subject_id: int, student: Student, db: DbSession) -> Studen
     return _to_schema(await student_grades.student_subject(db, student.id, subject_id))
 
 
-@router.post("/chat", summary="Preguntar por mis notas en lenguaje natural")
+# --- Chat con el asistente ---------------------------------------------------
+
+Llm = Annotated[LLMClient, Depends(get_llm)]
+
+
+async def _conversation_for(db, student: User, conversation_id: int | None) -> Conversation:
+    if conversation_id is None:
+        return await conversations.create(db, student.id, ChatChannel.APP)
+    return await conversations.get(db, student.id, conversation_id)
+
+
+@router.post("/chat", summary="Preguntar por mis notas (respuesta completa)")
 async def ask_about_my_grades(
-    data: ChatRequest,
+    data: ChatRequest, student: Student, db: DbSession, llm: Llm
+) -> ChatResponse:
+    """La IA responde usando **solo las notas del estudiante autenticado**.
+
+    Sin `conversation_id` se empieza una conversación nueva; con él, la IA recuerda lo
+    hablado en esa conversación. Para ver la respuesta palabra por palabra usa
+    `POST /student/chat/stream`.
+    """
+    conversation = await _conversation_for(db, student, data.conversation_id)
+    answer = await chat.ask(db, llm, student, conversation, data.message)
+    return ChatResponse(conversation_id=conversation.id, answer=answer)
+
+
+@router.post(
+    "/chat/stream",
+    response_class=EventSourceResponse,
+    summary="Preguntar por mis notas (streaming, palabra por palabra)",
+)
+async def ask_about_my_grades_stream(
+    data: ChatRequest, student: Student, db: DbSession, llm: Llm
+) -> AsyncIterator[ServerSentEvent]:
+    """Respuesta en **Server-Sent Events** (`text/event-stream`). Eventos, en orden:
+
+    - `conversation`: `{"id", "title"}` (guárdalo para continuar la conversación)
+    - `delta`: `{"text"}` fragmento de la respuesta; concaténalos según llegan
+    - `done`: `{}` la respuesta terminó (ya está guardada)
+    - `error`: `{"detail"}` si algo falla (p. ej. la IA no responde)
+    """
+    conversation = await _conversation_for(db, student, data.conversation_id)
+    yield ServerSentEvent(
+        event="conversation",
+        data={"id": conversation.id, "title": conversation.title or data.message[:60]},
+    )
+    try:
+        async for text in chat.ask_stream(db, llm, student, conversation, data.message):
+            yield ServerSentEvent(event="delta", data={"text": text})
+    except AppError as exc:
+        yield ServerSentEvent(event="error", data={"detail": exc.detail})
+        return
+    yield ServerSentEvent(event="done", data={})
+
+
+@router.get("/conversations", summary="Mis conversaciones")
+async def my_conversations(
     student: Student,
     db: DbSession,
-    llm: Annotated[LLMClient, Depends(get_llm)],
-) -> ChatResponse:
-    """La IA responde usando **solo las notas del estudiante autenticado** (p. ej. «¿en qué
-    materia voy peor?», «¿cuánto necesito en el 3er lapso para aprobar Física?»).
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Page[ConversationSummary]:
+    """Conversaciones de la app, de la más reciente a la más antigua."""
+    items, total = await conversations.list_for(db, student.id, ChatChannel.APP, limit, offset)
+    return Page(
+        items=[ConversationSummary.model_validate(c) for c in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
-    La API no guarda la conversación: para que la IA tenga contexto, envía en `history`
-    los mensajes anteriores (`user` / `assistant`).
-    """
-    answer = await chat.ask(db, llm, student, data.message, data.history)
-    return ChatResponse(answer=answer)
+
+@router.get("/conversations/{conversation_id}", summary="Mensajes de una conversación")
+async def my_conversation(
+    conversation_id: int, student: Student, db: DbSession
+) -> ConversationRead:
+    conversation = await conversations.get(db, student.id, conversation_id)
+    messages = await conversations.messages(db, conversation.id)
+    return ConversationRead.model_validate(
+        {**ConversationSummary.model_validate(conversation).model_dump(), "messages": messages}
+    )
+
+
+@router.delete(
+    "/conversations/{conversation_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Borrar una conversación",
+)
+async def delete_conversation(conversation_id: int, student: Student, db: DbSession) -> None:
+    await conversations.remove(db, student.id, conversation_id)

@@ -5,7 +5,6 @@ from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_valida
 
 from app.models.enrollment import GRADE_DECIMALS, MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
 from app.schemas.academic import SubjectRead
-from app.services.chat import ChatMessage as ChatMessageIn
 from app.services.student_grades import Standing
 
 Term = Annotated[int, Field(ge=1, le=TERMS_PER_SEMESTER, description="Lapso (1 a 3)")]
@@ -137,16 +136,3 @@ class StudentOverview(BaseModel):
     average: GradeNumber | None = Field(
         description="Promedio general: media de los promedios de las materias con notas"
     )
-
-
-class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=1000, examples=["¿En qué materia voy peor?"])
-    history: list[ChatMessageIn] = Field(
-        default_factory=list,
-        max_length=50,
-        description="Mensajes anteriores de la conversación (los guarda el cliente)",
-    )
-
-
-class ChatResponse(BaseModel):
-    answer: str
