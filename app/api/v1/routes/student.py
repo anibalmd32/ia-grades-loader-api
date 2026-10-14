@@ -8,6 +8,7 @@ from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from app.ai.client import LLMClient, get_llm
 from app.api.deps import DbSession, require_roles
+from app.core.config import get_settings
 from app.core.errors import AppError
 from app.models import ChatChannel, Conversation, Role, User
 from app.schemas.academic import SubjectRead
@@ -24,7 +25,9 @@ from app.schemas.grades import (
     SubjectProjection,
     TermGrade,
 )
+from app.schemas.telegram import TelegramLinkInvite, TelegramStatus
 from app.services import chat, conversations, student_grades
+from app.services import telegram_link as telegram_link_service
 from app.services.student_grades import SubjectGrades
 
 router = APIRouter(prefix="/student", tags=["Estudiante"])
@@ -148,3 +151,30 @@ async def my_conversation(
 )
 async def delete_conversation(conversation_id: int, student: Student, db: DbSession) -> None:
     await conversations.remove(db, student.id, conversation_id)
+
+
+# --- Telegram ----------------------------------------------------------------
+
+
+@router.get("/telegram", summary="Estado de la vinculación con Telegram")
+async def telegram_status(student: Student) -> TelegramStatus:
+    settings = get_settings()
+    return TelegramStatus(
+        enabled=settings.telegram_enabled,
+        linked=student.telegram_linked,
+        bot_username=settings.telegram_bot_username.lstrip("@") or None,
+    )
+
+
+@router.post("/telegram/link", summary="Generar enlace para vincular Telegram")
+async def telegram_link(student: Student, db: DbSession) -> TelegramLinkInvite:
+    """Devuelve un enlace `t.me/<bot>?start=<código>` de un solo uso. Al abrirlo y pulsar
+    **Iniciar** en Telegram, la cuenta queda vinculada y se pueden hacer preguntas sobre las
+    notas desde allí. Generar un enlace nuevo invalida el anterior."""
+    invite = await telegram_link_service.create_link(db, student)
+    return TelegramLinkInvite(url=invite.url, expires_at=invite.expires_at)
+
+
+@router.delete("/telegram", status_code=status.HTTP_204_NO_CONTENT, summary="Desvincular Telegram")
+async def telegram_unlink(student: Student, db: DbSession) -> None:
+    await telegram_link_service.unlink(db, student)
