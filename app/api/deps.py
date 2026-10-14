@@ -8,9 +8,10 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.security import TokenData, decode_access_token
+from app.core.security import TokenData
 from app.db.session import get_db
-from app.models import RevokedToken, Role, User
+from app.models import Role, User
+from app.services import auth as auth_service
 
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 
@@ -26,26 +27,28 @@ _UNAUTHORIZED = HTTPException(
 )
 
 
-async def get_token_data(
+async def _authenticate(
     db: DbSession, token: Annotated[str | None, Depends(oauth2_scheme)]
-) -> TokenData:
-    data = decode_access_token(token) if token else None
-    # Un token revocado por logout deja de valer aunque no haya expirado
-    if data is None or await db.get(RevokedToken, data.jti) is not None:
+) -> tuple[TokenData, User]:
+    session = await auth_service.user_from_token(db, token)
+    if session is None:
         raise _UNAUTHORIZED
-    return data
+    return session
+
+
+async def get_token_data(
+    session: Annotated[tuple[TokenData, User], Depends(_authenticate)],
+) -> TokenData:
+    return session[0]
 
 
 CurrentToken = Annotated[TokenData, Depends(get_token_data)]
 
 
-async def get_current_user(db: DbSession, token: CurrentToken) -> User:
-    user = await db.get(User, token.user_id)
-    # Un usuario desactivado, o cuya contraseña cambió después de emitirse el token,
-    # pierde el acceso aunque el token no haya expirado
-    if user is None or not user.is_active or user.token_version != token.token_version:
-        raise _UNAUTHORIZED
-    return user
+async def get_current_user(
+    session: Annotated[tuple[TokenData, User], Depends(_authenticate)],
+) -> User:
+    return session[1]
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
