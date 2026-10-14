@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
+from app.core.logging import REQUEST_ID_HEADER, RequestIdMiddleware, configure_logging
 from app.db.session import SessionLocal
 from app.mcp.server import create_mcp
 
@@ -90,6 +91,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
+    configure_logging(settings.log_level)
 
     app = FastAPI(
         lifespan=lifespan,
@@ -109,7 +111,10 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Para que el front pueda leer el id de la petición y mostrarlo en los errores
+        expose_headers=[REQUEST_ID_HEADER],
     )
+    app.add_middleware(RequestIdMiddleware)
 
     register_error_handlers(app)
     app.include_router(api_router, prefix=settings.api_v1_prefix)

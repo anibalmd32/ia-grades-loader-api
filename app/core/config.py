@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     app_name: str = "IA Grades Loader API"
     app_env: Literal["development", "staging", "production"] = "development"
     debug: bool = False
+    # DEBUG, INFO, WARNING o ERROR
+    log_level: str = "INFO"
     api_v1_prefix: str = "/api/v1"
     # Orígenes permitidos separados por coma (front Tauri, Vite dev server, etc.)
     cors_origins: str = "http://localhost:1420,tauri://localhost,http://tauri.localhost"
