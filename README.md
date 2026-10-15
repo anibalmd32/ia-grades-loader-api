@@ -168,7 +168,10 @@ y ejecuta `docker compose --profile worker up -d`.
 
 ### Lista de comprobación para producción
 
+- `APP_ENV=production` en el `.env` del servidor (docker compose usa el valor del `.env`; si
+  dice `development`, el contenedor arranca en modo desarrollo).
 - `JWT_SECRET_KEY` de al menos 32 caracteres (la API no arranca en producción sin él).
+- `MYSQL_USER` distinto de `root` (la imagen de MySQL no lo permite).
 - `CORS_ORIGINS` solo con los orígenes reales del front.
 - HTTPS delante de la API con un proxy inverso (Nginx, Caddy, Traefik); la imagen ya acepta
   sus cabeceras (`--proxy-headers`).
