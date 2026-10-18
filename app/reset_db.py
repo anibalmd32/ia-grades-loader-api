@@ -4,6 +4,7 @@ Pensado para limpiar después de las pruebas (p. ej. desde la shell de Render):
 
     python -m app.reset_db            # pide escribir el nombre de la base para confirmar
     python -m app.reset_db --yes      # sin preguntar (scripts)
+    python -m app.reset_db --yes --seed  # y cargar los datos de demostración (app.seed_db)
 
 Tras reiniciar no queda ningún usuario: el instalador del super admin
 (`POST /api/v1/setup`) vuelve a estar disponible. Las tablas se recrean con las
@@ -57,6 +58,11 @@ def recreate_schema() -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Borra todos los datos y recrea las tablas.")
     parser.add_argument("--yes", action="store_true", help="no pedir confirmación")
+    parser.add_argument(
+        "--seed",
+        action="store_true",
+        help="después de reiniciar, cargar los datos de demostración (python -m app.seed_db)",
+    )
     args = parser.parse_args(argv)
 
     url, connect_args = engine_url_and_args(get_settings().database_url)
@@ -81,6 +87,11 @@ def main(argv: list[str] | None = None) -> int:
     dropped = asyncio.run(_drop())
     print(f"Tablas borradas: {len(dropped)}")
     recreate_schema()
+    if args.seed:
+        from app import seed_db
+
+        print("Base vacía con el esquema al día. Cargando datos de demostración...")
+        return seed_db.run()
     print("Listo: base vacía con el esquema al día. Crea el super admin con el instalador.")
     return 0
 

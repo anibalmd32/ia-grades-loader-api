@@ -2,8 +2,13 @@
 
 API para la carga y consulta de notas universitarias asistida por IA.
 
-- Los profesores cargan las notas (1 a 20, una por lapso, 3 lapsos por semestre), manualmente o
-  desde un Excel que un modelo de IA interpreta.
+- Los profesores cargan las notas (una por lapso), manualmente o desde un Excel que un modelo de
+  IA interpreta.
+- El super admin configura las reglas académicas: tipo de periodo (semestres, trimestres,
+  cuatrimestres o años), número de lapsos y su nombre ("Lapso", "Corte"...), peso de cada lapso,
+  escala de notas, nota aprobatoria, decimales y redondeo de la definitiva
+  (`GET/PUT /api/v1/settings/academic`). Por defecto: semestres de 3 lapsos que pesan igual,
+  notas del 1 al 20 y se aprueba con 10.
 - Los estudiantes consultan sus notas de forma tradicional, en lenguaje natural o por Telegram.
 
 La especificación completa, la documentación técnica y el tablero de tareas están en Notion:
@@ -23,7 +28,8 @@ cp .env.example .env             # y completa los valores
 uv run fastapi dev app/main.py   # servidor con recarga en http://localhost:8000
 ```
 
-La primera vez, crea el super admin con el instalador (`POST /api/v1/setup`). Una vez creado, el
+La primera vez, crea el super admin con el instalador (`POST /api/v1/setup`) o carga los datos
+de demostración (ver más abajo). Una vez creado, el
 instalador deja de estar disponible y las demás cuentas se crean desde dentro de la aplicación:
 super admin → coordinadores → profesores y estudiantes. No existe registro público.
 
@@ -177,6 +183,34 @@ python -m app.reset_db                          # shell de Render o dentro del c
 docker compose exec api python -m app.reset_db  # con docker compose
 uv run python -m app.reset_db                   # en local (usa el DATABASE_URL del .env)
 ```
+
+### Datos de demostración (seeder)
+
+Sobre una base **vacía** (recién creada o reiniciada) carga una universidad de ejemplo completa
+para enseñar todas las pantallas al instante: configuración académica, super admin,
+2 coordinadores, 6 profesores, 32 estudiantes (V y E, uno desactivado y dos con la contraseña
+inicial), dos semestres (uno cerrado y otro en curso), asignaciones, matrículas, ~700 notas con
+todas las situaciones (aprobada, reprobada, asegurada, en curso e imposible), importaciones de
+Excel (confirmada, pendiente de revisar y fallida) y conversaciones con el asistente. Los datos
+son siempre los mismos.
+
+```bash
+python -m app.seed_db                           # sobre una base vacía
+python -m app.reset_db --yes --seed             # borrar todo y sembrar en un paso
+docker compose exec api python -m app.reset_db --yes --seed
+uv run python -m app.seed_db --password otra-clave
+```
+
+Cuentas (contraseña `demo1234` en todas):
+
+| Rol | Usuario |
+|---|---|
+| Super admin | `admin@demo.edu` |
+| Coordinación | `coordinacion@demo.edu` |
+| Profesora con importaciones de Excel | `profesor@demo.edu` |
+| Estudiante con todas las situaciones de notas | cédula `V` `12345678` |
+
+Si la base ya tiene datos, el seeder no toca nada y avisa.
 
 ### Lista de comprobación para producción
 
