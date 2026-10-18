@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 import app.models  # noqa: F401  (registra todas las tablas en Base.metadata)
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.url import engine_url_and_args
 
 config = context.config
 
@@ -16,7 +17,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 target_metadata = Base.metadata
-database_url = get_settings().database_url
+database_url, connect_args = engine_url_and_args(get_settings().database_url)
 
 
 def run_migrations_offline() -> None:
@@ -41,7 +42,9 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
-    connectable = create_async_engine(database_url, poolclass=pool.NullPool)
+    connectable = create_async_engine(
+        database_url, connect_args=connect_args, poolclass=pool.NullPool
+    )
 
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)
