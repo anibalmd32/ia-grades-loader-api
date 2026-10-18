@@ -9,6 +9,7 @@ from app.api.v1.routes import (
     settings,
     setup,
     student,
+    student_import,
     subjects,
     teacher,
     telegram,
@@ -22,6 +23,7 @@ api_router.include_router(settings.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.coordinators_router)
 api_router.include_router(users.teachers_router)
+api_router.include_router(student_import.router)
 api_router.include_router(users.students_router)
 api_router.include_router(semesters.router)
 api_router.include_router(subjects.router)
