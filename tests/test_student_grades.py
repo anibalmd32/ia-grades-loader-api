@@ -55,7 +55,7 @@ async def test_detalle_de_materia_no_matriculada(client, campus):
 async def test_estudiante_sin_materias(client, login_as):
     headers = await login_as(Role.STUDENT, cedula=77)
     body = (await client.get("/student/subjects", headers=headers)).json()
-    assert body == {"subjects": [], "average": None}
+    assert body == {"subjects": [], "average": None, "semesters": []}
 
 
 @pytest.mark.parametrize("role", [Role.TEACHER, Role.COORDINATOR, Role.SUPER_ADMIN])
@@ -124,3 +124,32 @@ async def test_la_api_devuelve_la_proyeccion(client, campus):
     }
     mat = next(s for s in body["subjects"] if s["subject"]["code"] == "MAT-101")
     assert mat["projection"]["standing"] == "secured"  # 15 + 18.5 ya pasan de 30 - 20
+
+
+async def test_promedio_y_resultado_por_semestre(client, campus):
+    ana = campus["students"]["Ana"]
+    body = (await client.get("/student/subjects", headers=ana["headers"])).json()
+    first, second = body["semesters"]
+    assert first["semester"]["name"] == "2026-I"
+    assert first["average"] == 13.38  # (16.75 + 10) / 2
+    assert (first["subjects_count"], first["passed_count"], first["failed_count"]) == (2, 0, 0)
+    assert second["semester"]["name"] == "2026-II"
+    assert second["average"] is None
+    assert second["subjects_count"] == 1
+
+    # Al cerrar las materias: MAT-101 aprobada (15.17) y FIS-101 reprobada (6.67)
+    pedro = campus["teachers"]["Pedro Profe"]
+    for code, values in [("MAT-101", {3: 12}), ("FIS-101", {2: 5, 3: 5})]:
+        entries = [
+            {"student_id": ana["id"], "term": term, "value": value}
+            for term, value in values.items()
+        ]
+        response = await client.put(
+            f"/teacher/subjects/{campus['subjects'][code]['id']}/grades",
+            json={"grades": entries},
+            headers=pedro,
+        )
+        assert response.status_code == 200
+    first = (await client.get("/student/subjects", headers=ana["headers"])).json()["semesters"][0]
+    assert (first["subjects_count"], first["passed_count"], first["failed_count"]) == (2, 1, 1)
+    assert first["average"] == 10.92  # (15.17 + 6.67) / 2

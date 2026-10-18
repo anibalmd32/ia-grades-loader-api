@@ -132,3 +132,25 @@ async def student_subject(db: AsyncSession, student_id: int, subject_id: int) ->
 def overall_average(subjects: list[SubjectGrades]) -> Decimal | None:
     """Promedio de los promedios de las materias que ya tienen alguna nota."""
     return average([s.average for s in subjects])
+
+
+@dataclass
+class SemesterGrades:
+    semester: Semester
+    subjects: list[SubjectGrades]
+
+    @property
+    def average(self) -> Decimal | None:
+        return overall_average(self.subjects)
+
+    def count(self, standing: Standing) -> int:
+        return sum(1 for s in self.subjects if s.projection.standing == standing)
+
+
+def by_semester(subjects: list[SubjectGrades]) -> list[SemesterGrades]:
+    """Agrupa las materias por semestre, en el mismo orden en que llegan."""
+    groups: dict[int, SemesterGrades] = {}
+    for item in subjects:
+        semester = item.subject.semester
+        groups.setdefault(semester.id, SemesterGrades(semester, [])).subjects.append(item)
+    return list(groups.values())

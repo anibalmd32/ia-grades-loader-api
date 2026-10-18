@@ -4,7 +4,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
 
 from app.models.enrollment import GRADE_DECIMALS, MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
-from app.schemas.academic import SubjectRead
+from app.schemas.academic import SemesterRead, SubjectRead
 from app.services.student_grades import Standing
 
 Term = Annotated[int, Field(ge=1, le=TERMS_PER_SEMESTER, description="Lapso (1 a 3)")]
@@ -136,8 +136,22 @@ class StudentSubjectGrades(BaseModel):
     projection: SubjectProjection
 
 
+class SemesterAverage(BaseModel):
+    semester: SemesterRead
+    average: GradeNumber | None = Field(
+        description="Promedio del semestre: media de los promedios de sus materias con notas"
+    )
+    subjects_count: int = Field(description="Materias matriculadas en el semestre")
+    passed_count: int = Field(description="Materias aprobadas (los 3 lapsos cargados)")
+    failed_count: int = Field(description="Materias reprobadas (los 3 lapsos cargados)")
+
+
 class StudentOverview(BaseModel):
     subjects: list[StudentSubjectGrades]
     average: GradeNumber | None = Field(
         description="Promedio general: media de los promedios de las materias con notas"
+    )
+    semesters: list[SemesterAverage] = Field(
+        description="Promedio y materias aprobadas/reprobadas de cada semestre, en el mismo "
+        "orden que `subjects`"
     )

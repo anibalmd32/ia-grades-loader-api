@@ -296,4 +296,8 @@ async def campus(client, login_as, session):
     await grade("Pedro Profe", mat, "Ana", 2, 18.5)
     await grade("Pedro Profe", fis, "Ana", 1, 10)
     await grade("Pedro Profe", mat, "Beto", 1, 20)
-    return {"students": students, "subjects": {"MAT-101": mat, "FIS-101": fis, "MAT-201": mat2}}
+    return {
+        "students": students,
+        "teachers": teachers,
+        "subjects": {"MAT-101": mat, "FIS-101": fis, "MAT-201": mat2},
+    }

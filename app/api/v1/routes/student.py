@@ -12,7 +12,7 @@ from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.rate_limit import RateLimitedError
 from app.models import ChatChannel, Conversation, Role, User
-from app.schemas.academic import SubjectRead
+from app.schemas.academic import SemesterRead, SubjectRead
 from app.schemas.chat import (
     ChatRequest,
     ChatResponse,
@@ -21,6 +21,7 @@ from app.schemas.chat import (
 )
 from app.schemas.common import Page
 from app.schemas.grades import (
+    SemesterAverage,
     StudentOverview,
     StudentSubjectGrades,
     SubjectProjection,
@@ -29,7 +30,7 @@ from app.schemas.grades import (
 from app.schemas.telegram import TelegramLinkInvite, TelegramStatus
 from app.services import chat, conversations, student_grades
 from app.services import telegram_link as telegram_link_service
-from app.services.student_grades import SubjectGrades
+from app.services.student_grades import Standing, SubjectGrades
 
 router = APIRouter(prefix="/student", tags=["Estudiante"])
 
@@ -49,11 +50,22 @@ def _to_schema(item: SubjectGrades) -> StudentSubjectGrades:
 @router.get("/subjects", summary="Mis materias y notas")
 async def my_subjects(student: Student, db: DbSession) -> StudentOverview:
     """Todas las materias en las que estás matriculado, con la nota de cada lapso
-    (null si aún no se ha cargado), el promedio de cada una y el promedio general."""
+    (null si aún no se ha cargado), el promedio de cada una, el de cada semestre y el
+    promedio general."""
     subjects = await student_grades.student_subjects(db, student.id)
     return StudentOverview(
         subjects=[_to_schema(s) for s in subjects],
         average=student_grades.overall_average(subjects),
+        semesters=[
+            SemesterAverage(
+                semester=SemesterRead.model_validate(group.semester),
+                average=group.average,
+                subjects_count=len(group.subjects),
+                passed_count=group.count(Standing.PASSED),
+                failed_count=group.count(Standing.FAILED),
+            )
+            for group in student_grades.by_semester(subjects)
+        ],
     )
 
 
