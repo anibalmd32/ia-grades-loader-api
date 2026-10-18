@@ -18,7 +18,7 @@ from app.schemas.grades import (
     TermGrade,
 )
 from app.schemas.import_jobs import ImportJobRead, ImportJobSummary
-from app.services import grades, import_jobs, rules
+from app.services import academic, grades, import_jobs, rules
 from app.services.rules import MAX_TERMS
 from app.worker import notify_new_job
 
@@ -77,12 +77,14 @@ async def save_subject_grades(
     """Envía solo las notas que cambian. `value: null` borra la nota de ese lapso.
 
     Es todo o nada: si algún estudiante no está matriculado (404) o alguna nota o lapso no
-    cumple la configuración académica (422) no se guarda ninguna.
+    cumple la configuración académica (422) no se guarda ninguna. Si el periodo de la
+    materia está cerrado responde 409.
 
     Si las notas salen de una importación, envía su `import_job_id` para marcarla como
     confirmada (debe ser de esta materia y estar en `done`; si no, 409).
     """
     subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    await academic.ensure_open(db, subject.semester)
     if data.import_job_id is not None:
         await import_jobs.mark_confirmed(db, teacher.id, subject.id, data.import_job_id)
     await grades.save_grades(
@@ -117,7 +119,8 @@ async def enqueue_grades_import(
     El resultado es una previsualización: **no se guarda nada**. Envía las filas que
     quieras guardar (ok o warning, ya corregidas) a `PUT /teacher/subjects/{id}/grades`.
     """
-    await grades.get_teacher_subject(db, teacher.id, subject_id)
+    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    await academic.ensure_open(db, subject.semester)
     if default_term is not None:
         problem = (await rules.get_rules(db)).term_error(default_term)
         if problem:

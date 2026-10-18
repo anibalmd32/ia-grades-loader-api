@@ -10,7 +10,8 @@ Crea una universidad de ejemplo lista para enseñar todas las pantallas:
 - Super admin, 2 coordinadores, 6 profesores y 32 estudiantes (V y E), todos activos y sin
   obligación de cambiar la contraseña (salvo un profesor y un estudiante, para enseñar ese
   flujo, y una cuenta desactivada).
-- Dos semestres: 2025-II cerrado (todas las notas) y 2026-I en curso (notas parciales).
+- Dos semestres: 2025-II cerrado (todas las notas, ya no se pueden modificar) y 2026-I en
+  curso (notas parciales).
 - Asignaciones de profesores, matrículas y notas con todas las situaciones posibles
   (aprobada, reprobada, asegurada, en curso e imposible).
 - Importaciones de Excel del profesor de ejemplo: una confirmada, una pendiente de revisar
@@ -246,6 +247,9 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
     subjects: dict[str, Subject] = {}
     for semester_name, items in SUBJECTS.items():
         semester = Semester(name=semester_name)
+        if semester_name == CLOSED_SEMESTER:
+            semester.is_closed = True
+            semester.closed_at = now - timedelta(days=30)
         db.add(semester)
         for code, name in items:
             subjects[code] = Subject(code=code, name=name, semester=semester)

@@ -41,6 +41,20 @@ async def update_semester(semester_id: int, data: SemesterUpdate, db: DbSession)
     return SemesterRead.model_validate(await academic.update_semester(db, semester_id, data.name))
 
 
+@router.post("/{semester_id}/close", summary="Cerrar semestre (bloquea sus notas)")
+async def close_semester(semester_id: int, db: DbSession) -> SemesterRead:
+    """Con el periodo cerrado los profesores ya no pueden cargar ni corregir notas (tampoco
+    importarlas) y no se pueden cambiar sus matrículas ni sus materias."""
+    semester = await academic.set_closed(db, semester_id, True)
+    return _with_count(semester, await academic.subjects_per_semester(db, [semester.id]))
+
+
+@router.post("/{semester_id}/reopen", summary="Reabrir semestre")
+async def reopen_semester(semester_id: int, db: DbSession) -> SemesterRead:
+    semester = await academic.set_closed(db, semester_id, False)
+    return _with_count(semester, await academic.subjects_per_semester(db, [semester.id]))
+
+
 @router.delete(
     "/{semester_id}",
     status_code=status.HTTP_204_NO_CONTENT,

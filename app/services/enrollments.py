@@ -24,6 +24,8 @@ async def _enroll_pairs(db: AsyncSession, pairs: set[tuple[int, int]]) -> tuple[
     """
     student_ids = {s for s, _ in pairs}
     subject_ids = {m for _, m in pairs}
+    for subject in await db.scalars(select(Subject).where(Subject.id.in_(subject_ids))):
+        await academic.ensure_open(db, subject.semester)
     rows = await db.execute(
         select(Enrollment.student_id, Enrollment.subject_id).where(
             Enrollment.student_id.in_(student_ids),
@@ -85,6 +87,7 @@ async def unenroll(db: AsyncSession, student_id: int, subject_id: int) -> None:
     )
     if enrollment is None:
         raise NotFoundError("El estudiante no está matriculado en esa materia")
+    await academic.ensure_open(db, (await academic.get_subject(db, subject_id)).semester)
     if await db.scalar(select(exists().where(Grade.enrollment_id == enrollment.id))):
         raise ConflictError("No se puede retirar la matrícula: ya tiene notas cargadas")
     await db.delete(enrollment)

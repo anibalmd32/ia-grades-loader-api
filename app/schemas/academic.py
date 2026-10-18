@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
@@ -30,6 +31,13 @@ class SemesterRead(BaseModel):
 
     id: int
     name: str
+    is_closed: bool = Field(
+        description="Cerrado: sus notas, matrículas y materias ya no se pueden modificar"
+    )
+    closed_at: Annotated[
+        datetime | None,
+        AfterValidator(lambda d: d.replace(tzinfo=UTC) if d and d.tzinfo is None else d),
+    ] = None
     subjects_count: int | None = Field(default=None, description="Materias." + COUNT_NOTE)
 
 

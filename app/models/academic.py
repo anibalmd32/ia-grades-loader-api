@@ -1,4 +1,6 @@
-from sqlalchemy import ForeignKey, String
+from datetime import datetime
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -9,6 +11,9 @@ class Semester(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(50), unique=True)
+    # Cerrado: ya no se cargan ni modifican notas, ni se cambian matrículas o materias
+    is_closed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     # lazy="raise": en async hay que cargarlas explícitamente (selectinload)
     subjects: Mapped[list["Subject"]] = relationship(back_populates="semester", lazy="raise")

@@ -5,6 +5,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
 from app.models import Enrollment, Semester, Subject, TeacherSubject
+from app.models.import_job import utcnow
+from app.services import rules
 
 # --- Semestres ---------------------------------------------------------------
 
@@ -50,6 +52,24 @@ async def update_semester(db: AsyncSession, semester_id: int, name: str) -> Seme
     semester = await get_semester(db, semester_id)
     await _ensure_semester_name_free(db, name, exclude_id=semester_id)
     semester.name = name
+    await db.commit()
+    return semester
+
+
+async def ensure_open(db: AsyncSession, semester: Semester) -> None:
+    """Lanza 409 si el periodo está cerrado (sus notas y matrículas quedan fijas)."""
+    if semester.is_closed:
+        label = (await rules.get_rules(db)).period_label.lower()
+        raise ConflictError(
+            f"El {label} {semester.name} está cerrado: no se pueden modificar sus notas, "
+            "matrículas ni materias. Pide a coordinación que lo reabra."
+        )
+
+
+async def set_closed(db: AsyncSession, semester_id: int, closed: bool) -> Semester:
+    semester = await get_semester(db, semester_id)
+    semester.is_closed = closed
+    semester.closed_at = utcnow() if closed else None
     await db.commit()
     return semester
 
@@ -114,7 +134,7 @@ async def subject_counts(db: AsyncSession, subject_ids: list[int]) -> dict[int, 
 
 
 async def create_subject(db: AsyncSession, semester_id: int, code: str, name: str) -> Subject:
-    await get_semester(db, semester_id)
+    await ensure_open(db, await get_semester(db, semester_id))
     await _ensure_code_free(db, code)
     subject = Subject(semester_id=semester_id, code=code, name=name)
     db.add(subject)
@@ -125,8 +145,9 @@ async def create_subject(db: AsyncSession, semester_id: int, code: str, name: st
 
 async def update_subject(db: AsyncSession, subject_id: int, changes: dict) -> Subject:
     subject = await get_subject(db, subject_id)
-    if "semester_id" in changes:
-        await get_semester(db, changes["semester_id"])
+    if "semester_id" in changes and changes["semester_id"] != subject.semester_id:
+        await ensure_open(db, subject.semester)
+        await ensure_open(db, await get_semester(db, changes["semester_id"]))
     if "code" in changes:
         await _ensure_code_free(db, changes["code"], exclude_id=subject_id)
     for field, value in changes.items():
