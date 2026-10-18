@@ -66,6 +66,13 @@ class AcademicSettingsBase(BaseModel):
         description="Tipos de documento admitidos (el login de estudiantes los ofrece en este "
         "orden)",
     )
+    assistant_enabled: bool = Field(
+        description="Los estudiantes pueden preguntar a la IA por sus notas (app y MCP)"
+    )
+    telegram_enabled: bool = Field(
+        description="Los estudiantes pueden usar el asistente por Telegram (requiere también "
+        "assistant_enabled y el bot configurado en el servidor)"
+    )
 
 
 class AcademicSettingsUpdate(AcademicSettingsBase):
@@ -115,6 +122,8 @@ class AcademicSettingsUpdate(AcademicSettingsBase):
             round_final_grade=self.round_final_grade,
             document_label=self.document_label,
             document_types=tuple((t.code, t.name) for t in self.document_types),
+            assistant_enabled=self.assistant_enabled,
+            telegram_enabled=self.telegram_enabled,
         )
 
 
@@ -186,6 +195,8 @@ class AcademicSettingsRead(AcademicSettingsBase):
             round_final_grade=rules.round_final_grade,
             document_label=rules.document_label,
             document_types=[DocumentType(code=c, name=n) for c, n in rules.document_types],
+            assistant_enabled=rules.assistant_enabled,
+            telegram_enabled=rules.telegram_enabled,
             period_label=rules.period_label,
             period_label_plural=rules.period_label_plural,
             term_label_plural=rules.term_label_plural,

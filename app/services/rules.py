@@ -51,6 +51,9 @@ class GradingRules:
     document_label: str = "Cédula"
     # (código, nombre) de cada tipo de documento
     document_types: tuple[tuple[str, str], ...] = (("V", "Venezolano"), ("E", "Extranjero"))
+    # Asistente de IA (app y MCP) y su uso por Telegram, para los estudiantes
+    assistant_enabled: bool = True
+    telegram_enabled: bool = True
 
     @property
     def document_codes(self) -> list[str]:
@@ -253,6 +256,8 @@ def _from_row(row: AcademicSettings) -> GradingRules:
         round_final_grade=row.round_final_grade,
         document_label=row.document_label,
         document_types=tuple((t["code"], t["name"]) for t in row.document_types),
+        assistant_enabled=row.assistant_enabled,
+        telegram_enabled=row.telegram_enabled,
     )
 
 
@@ -340,5 +345,7 @@ async def update_rules(db: AsyncSession, new: GradingRules) -> GradingRules:
     row.round_final_grade = new.round_final_grade
     row.document_label = new.document_label
     row.document_types = [{"code": c, "name": n} for c, n in new.document_types]
+    row.assistant_enabled = new.assistant_enabled
+    row.telegram_enabled = new.telegram_enabled
     await db.commit()
     return _from_row(row)

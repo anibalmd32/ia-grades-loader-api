@@ -46,3 +46,6 @@ class AcademicSettings(TimestampMixin, Base):
     document_label: Mapped[str] = mapped_column(String(30), default="Cédula")
     # [{"code": "V", "name": "Venezolano"}, ...]
     document_types: Mapped[list[dict[str, str]]] = mapped_column(JSON)
+    # Funciones de IA para los estudiantes (p. ej. para controlar el gasto en el proveedor)
+    assistant_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    telegram_enabled: Mapped[bool] = mapped_column(Boolean, default=True)

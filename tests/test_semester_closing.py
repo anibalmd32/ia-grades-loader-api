@@ -105,6 +105,8 @@ NEW_RULES = {
     "round_final_grade": False,
     "document_label": "Cédula",
     "document_types": [{"code": "V", "name": "Venezolano"}, {"code": "E", "name": "Extranjero"}],
+    "assistant_enabled": True,
+    "telegram_enabled": True,
 }
 
 

@@ -13,24 +13,44 @@ from app.ai.client import LLMClient
 from app.ai.prompts import LANGUAGE_REMINDER, TELEGRAM_STYLE, student_chat_system
 from app.ai.student_tools import TOOLS
 from app.core.config import get_settings
+from app.core.errors import AppError
 from app.core.rate_limit import RateLimiter
 from app.models import ChatChannel, Conversation, MessageRole, User
 from app.services import conversations, rules
 
+
+class AssistantDisabledError(AppError):
+    status_code = 403
+
+    def __init__(self, detail: str = "La institución desactivó el asistente de notas"):
+        super().__init__(detail)
+
+
 # Preguntas por minuto y estudiante, sumando app y Telegram (cada una llama a la IA)
 question_limiter = RateLimiter(lambda: get_settings().chat_rate_limit_per_minute)
+
+
+async def ensure_enabled(db: AsyncSession, channel: ChatChannel) -> rules.GradingRules:
+    """403 si la institución desactivó el asistente (o su uso por Telegram)."""
+    current = await rules.get_rules(db)
+    if not current.assistant_enabled:
+        raise AssistantDisabledError
+    if channel == ChatChannel.TELEGRAM and not current.telegram_enabled:
+        raise AssistantDisabledError("La institución desactivó el asistente por Telegram")
+    return current
 
 
 async def _prepare(
     db: AsyncSession, student: User, conversation: Conversation, question: str
 ) -> tuple[list[dict[str, Any]], Any]:
     """Carga el contexto, guarda la pregunta y devuelve (mensajes, ejecutor de herramientas)."""
+    current = await ensure_enabled(db, conversation.channel)
     question_limiter.hit(student.id)
     history = await conversations.messages(
         db, conversation.id, last=get_settings().chat_max_history
     )
     await conversations.add_message(db, conversation, MessageRole.USER, question)
-    system = student_chat_system(student.first_name, await rules.get_rules(db))
+    system = student_chat_system(student.first_name, current)
     if conversation.channel == ChatChannel.TELEGRAM:
         system += TELEGRAM_STYLE
     system += LANGUAGE_REMINDER

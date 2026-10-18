@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.ai.student_tools import TOOLS, SubjectArgs
 from app.models import Role
 from app.services import auth as auth_service
+from app.services import rules
 
 INSTRUCTIONS = (
     "Herramientas para que un estudiante consulte sus propias notas universitarias. "
@@ -68,6 +69,8 @@ def create_mcp(sessionmaker: async_sessionmaker[AsyncSession]) -> FastMCP:
     async def run(name: str, args: dict[str, Any]) -> dict[str, Any]:
         student_id = _current_student_id()
         async with sessionmaker() as db:
+            if not (await rules.get_rules(db)).assistant_enabled:
+                raise ToolError("La institución desactivó el asistente de notas")
             return await TOOLS[name].run(db, student_id, args)
 
     @mcp.tool(name="resumen_de_notas", description=TOOLS["resumen_de_notas"].description)

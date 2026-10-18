@@ -16,7 +16,7 @@ from app.ai.client import LLMClient
 from app.core.errors import AppError
 from app.core.rate_limit import RateLimitedError
 from app.models import ChatChannel
-from app.services import chat, conversations, telegram_link
+from app.services import chat, conversations, rules, telegram_link
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +79,9 @@ class TelegramBotService:
 
     async def start(self, chat_id: int, code: str | None) -> str:
         async with self.sessionmaker() as db:
+            current = await rules.get_rules(db)
+            if code and not (current.telegram_enabled and current.assistant_enabled):
+                return "La institución desactivó el asistente por Telegram."
             if code:
                 try:
                     student = await telegram_link.consume(db, code, chat_id)
@@ -119,7 +122,7 @@ class TelegramBotService:
             conversation = await conversations.current(db, student.id, ChatChannel.TELEGRAM)
             try:
                 answer = await chat.ask(db, self.llm_factory(), student, conversation, text)
-            except RateLimitedError as exc:
+            except (RateLimitedError, chat.AssistantDisabledError) as exc:
                 return html.escape(exc.detail)
             except AppError as exc:
                 logger.warning("Fallo respondiendo en Telegram al chat %s: %s", chat_id, exc)

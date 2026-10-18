@@ -2,6 +2,7 @@ from dataclasses import replace
 from decimal import Decimal
 
 import pytest
+from pydantic import SecretStr
 
 from app.ai.prompts import grades_extraction_system, student_chat_system
 from app.models import PeriodType, Role
@@ -21,6 +22,8 @@ DEFAULTS = {
     "round_final_grade": False,
     "document_label": "Cédula",
     "document_types": [{"code": "V", "name": "Venezolano"}, {"code": "E", "name": "Extranjero"}],
+    "assistant_enabled": True,
+    "telegram_enabled": True,
 }
 
 
@@ -369,3 +372,54 @@ async def test_codigos_de_documento_repetidos(client, admin):
     types = [{"code": "V", "name": "Uno"}, {"code": "v", "name": "Dos"}]
     response = await put_settings(client, admin, document_types=types)
     assert response.status_code == 422
+
+
+# --- Activar o desactivar el asistente y Telegram ---------------------------------
+
+
+async def test_desactivar_el_asistente(client, admin, campus, monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "telegram_bot_token", SecretStr("123:abc"))
+    monkeypatch.setattr(get_settings(), "telegram_bot_username", "notas_bot")
+    ana = campus["students"]["Ana"]["headers"]
+    assert (await client.get("/student/telegram", headers=ana)).json()["enabled"] is True
+
+    await put_settings(client, admin, assistant_enabled=False)
+    response = await client.post("/student/chat", json={"message": "hola"}, headers=ana)
+    assert response.status_code == 403
+    assert response.json()["detail"] == "La institución desactivó el asistente de notas"
+    stream = await client.post("/student/chat/stream", json={"message": "hola"}, headers=ana)
+    assert "event: error" in stream.text and "conversation" not in stream.text
+    # No se crean conversaciones vacías
+    assert (await client.get("/student/conversations", headers=ana)).json()["total"] == 0
+    # Sin asistente tampoco hay Telegram
+    assert (await client.get("/student/telegram", headers=ana)).json()["enabled"] is False
+    assert (await client.post("/student/telegram/link", headers=ana)).status_code == 403
+
+
+async def test_desactivar_solo_telegram(client, admin, campus, sessionmaker, monkeypatch):
+    from app.core.config import get_settings
+    from app.models import ChatChannel
+    from app.services import chat, conversations
+    from app.telegram.handlers import TelegramBotService
+
+    monkeypatch.setattr(get_settings(), "telegram_bot_token", SecretStr("123:abc"))
+    monkeypatch.setattr(get_settings(), "telegram_bot_username", "notas_bot")
+    await put_settings(client, admin, telegram_enabled=False)
+    ana = campus["students"]["Ana"]
+    assert (await client.get("/student/telegram", headers=ana["headers"])).json()[
+        "enabled"
+    ] is False
+    assert (await client.post("/student/telegram/link", headers=ana["headers"])).status_code == 403
+
+    bot = TelegramBotService(sessionmaker, lambda: None)
+    assert "desactivó" in await bot.start(1, "codigo")
+
+    async with sessionmaker() as db:
+        from app.models import User
+
+        student = await db.get(User, ana["id"])
+        conversation = await conversations.create(db, student.id, ChatChannel.TELEGRAM)
+        with pytest.raises(chat.AssistantDisabledError):
+            await chat.ask(db, None, student, conversation, "hola")

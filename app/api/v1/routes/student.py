@@ -83,6 +83,7 @@ Llm = Annotated[LLMClient, Depends(get_llm)]
 
 
 async def _conversation_for(db, student: User, conversation_id: int | None) -> Conversation:
+    await chat.ensure_enabled(db, ChatChannel.APP)
     if conversation_id is None:
         return await conversations.create(db, student.id, ChatChannel.APP)
     return await conversations.get(db, student.id, conversation_id)
@@ -137,7 +138,12 @@ async def ask_about_my_grades_stream(
       `retry_after` son los segundos que hay que esperar cuando se superó el límite de
       preguntas por minuto; en cualquier otro error es `null`.
     """
-    conversation = await _conversation_for(db, student, data.conversation_id)
+    try:
+        conversation = await _conversation_for(db, student, data.conversation_id)
+    except AppError as exc:
+        # Ya es un stream: los errores (p. ej. asistente desactivado) van como evento
+        yield ServerSentEvent(event="error", data={"detail": exc.detail, "retry_after": None})
+        return
     yield ServerSentEvent(
         event="conversation",
         data={"id": conversation.id, "title": conversation.title or data.message[:60]},
@@ -195,10 +201,13 @@ async def delete_conversation(conversation_id: int, student: Student, db: DbSess
 
 
 @router.get("/telegram", summary="Estado de la vinculación con Telegram")
-async def telegram_status(student: Student) -> TelegramStatus:
+async def telegram_status(student: Student, db: DbSession) -> TelegramStatus:
     settings = get_settings()
+    current = await rules.get_rules(db)
     return TelegramStatus(
-        enabled=settings.telegram_enabled,
+        enabled=settings.telegram_enabled
+        and current.telegram_enabled
+        and current.assistant_enabled,
         linked=student.telegram_linked,
         bot_username=settings.telegram_bot_username.lstrip("@") or None,
     )
@@ -209,6 +218,9 @@ async def telegram_link(student: Student, db: DbSession) -> TelegramLinkInvite:
     """Devuelve un enlace `t.me/<bot>?start=<código>` de un solo uso. Al abrirlo y pulsar
     **Iniciar** en Telegram, la cuenta queda vinculada y se pueden hacer preguntas sobre las
     notas desde allí. Generar un enlace nuevo invalida el anterior."""
+    current = await rules.get_rules(db)
+    if not (current.telegram_enabled and current.assistant_enabled):
+        raise chat.AssistantDisabledError("La institución desactivó el asistente por Telegram")
     invite = await telegram_link_service.create_link(db, student)
     return TelegramLinkInvite(url=invite.url, expires_at=invite.expires_at)
 
