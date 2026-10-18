@@ -6,9 +6,10 @@ from decimal import Decimal
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.core.errors import InvalidDataError, NotFoundError
-from app.models import Enrollment, Grade, Subject, TeacherSubject, User
+from app.models import ChangeSource, Enrollment, Grade, GradeChange, Subject, TeacherSubject, User
 from app.services.rules import GradingRules
 
 
@@ -123,11 +124,13 @@ async def save_grades(
     entries: list[tuple[int, int, Decimal | None]],
     updated_by_id: int,
     rules: GradingRules,
+    import_job_id: str | None = None,
 ) -> None:
     """Crea, modifica o borra (valor None) notas de (estudiante, lapso, valor).
 
     Todo o nada: si algún estudiante no está matriculado o alguna nota no cumple la
-    configuración académica no se guarda ninguna.
+    configuración académica no se guarda ninguna. Cada cambio efectivo queda en el
+    historial (grade_changes) con su autor y su origen (a mano o importación).
     """
     validate_entries(entries, rules)
     student_ids = {student_id for student_id, _, _ in entries}
@@ -152,9 +155,11 @@ async def save_grades(
             select(Grade).where(Grade.enrollment_id.in_(enrollment_by_student.values()))
         )
     }
+    source = ChangeSource.MANUAL if import_job_id is None else ChangeSource.IMPORT
     for student_id, term, value in entries:
         enrollment_id = enrollment_by_student[student_id]
         grade = existing.get((enrollment_id, term))
+        old = None if grade is None else grade.value
         if value is None:
             if grade is not None:
                 await db.execute(delete(Grade).where(Grade.id == grade.id))
@@ -167,4 +172,46 @@ async def save_grades(
         elif grade.value != value:
             grade.value = value
             grade.updated_by_id = updated_by_id
+        if old != value:
+            db.add(
+                GradeChange(
+                    enrollment_id=enrollment_id,
+                    term=term,
+                    old_value=old,
+                    new_value=value,
+                    changed_by_id=updated_by_id,
+                    source=source,
+                    import_job_id=import_job_id,
+                )
+            )
     await db.commit()
+
+
+async def history(
+    db: AsyncSession,
+    subject_id: int,
+    *,
+    student_id: int | None,
+    limit: int,
+    offset: int,
+) -> tuple[list[tuple[GradeChange, User, str | None]], int]:
+    """Cambios de notas de una materia, del más reciente al más antiguo.
+
+    Devuelve (cambio, estudiante, nombre de quien lo hizo) y el total."""
+    changer = aliased(User)
+    query = (
+        select(GradeChange, User, changer.first_name + " " + changer.last_name)
+        .join(Enrollment, Enrollment.id == GradeChange.enrollment_id)
+        .join(User, User.id == Enrollment.student_id)
+        .outerjoin(changer, changer.id == GradeChange.changed_by_id)
+        .where(Enrollment.subject_id == subject_id)
+    )
+    if student_id is not None:
+        query = query.where(Enrollment.student_id == student_id)
+    total = await db.scalar(select(func.count()).select_from(query.subquery()))
+    rows = await db.execute(
+        query.order_by(GradeChange.created_at.desc(), GradeChange.id.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    return [tuple(row) for row in rows], total or 0

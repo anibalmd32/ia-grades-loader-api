@@ -6,7 +6,8 @@ from app.api.deps import DbSession, require_roles
 from app.models import Role
 from app.schemas.academic import SubjectCreate, SubjectRead, SubjectUpdate
 from app.schemas.common import Page
-from app.services import academic
+from app.schemas.grades import GradeChangeRead
+from app.services import academic, grades
 
 router = APIRouter(
     prefix="/subjects",
@@ -67,3 +68,25 @@ async def update_subject(subject_id: int, data: SubjectUpdate, db: DbSession) ->
 )
 async def delete_subject(subject_id: int, db: DbSession) -> None:
     await academic.delete_subject(db, subject_id)
+
+
+@router.get("/{subject_id}/grade-history", summary="Historial de cambios de notas de la materia")
+async def subject_grade_history(
+    subject_id: int,
+    db: DbSession,
+    student_id: Annotated[int | None, Query(description="Solo los de este estudiante")] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Page[GradeChangeRead]:
+    """Altas, correcciones y borrados de notas, del más reciente al más antiguo, con quién
+    los hizo y si fueron a mano o desde una importación de Excel."""
+    subject = await academic.get_subject(db, subject_id)
+    items, total = await grades.history(
+        db, subject.id, student_id=student_id, limit=limit, offset=offset
+    )
+    return Page(
+        items=[GradeChangeRead.from_row(*row) for row in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )

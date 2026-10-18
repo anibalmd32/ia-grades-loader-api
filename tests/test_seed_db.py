@@ -157,3 +157,27 @@ async def test_reset_con_seed(database, monkeypatch):
     assert await asyncio.to_thread(seed_db.main, []) == 0
     # Con datos: reset --seed borra y vuelve a sembrar
     assert await asyncio.to_thread(reset_db.main, ["--yes", "--seed"]) == 0
+
+
+async def test_historial_de_notas_de_demo(client, seeded):
+    assert seeded.grade_changes == seeded.grades + 1
+    headers = await login(client, email="luis.fernandez@demo.edu")
+    fis102 = next(
+        s
+        for s in (await client.get("/teacher/subjects", headers=headers)).json()
+        if s["code"] == "FIS-102"
+    )
+    me = await login(client, nationality="V", cedula=12345678)
+    student_id = (await client.get("/auth/me", headers=me)).json()["id"]
+    history = (
+        await client.get(
+            f"/teacher/subjects/{fis102['id']}/grade-history",
+            params={"student_id": student_id},
+            headers=headers,
+        )
+    ).json()
+    assert [(c["old_value"], c["new_value"]) for c in history["items"]] == [
+        (9.5, 10.5),
+        (None, 9.5),
+        (None, 9),
+    ]

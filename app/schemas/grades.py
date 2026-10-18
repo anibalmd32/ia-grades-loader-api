@@ -1,8 +1,17 @@
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainSerializer,
+    model_validator,
+)
 
+from app.models import ChangeSource
 from app.schemas.academic import SemesterRead, SubjectRead
 from app.services.rules import MAX_DECIMALS, MAX_GRADE_LIMIT, MAX_TERMS
 from app.services.student_grades import Standing
@@ -28,6 +37,10 @@ GradeValue = Annotated[
     _AsNumber,
 ]
 GradeNumber = Annotated[Decimal, _AsNumber]
+# Fechas guardadas en UTC sin zona: se devuelven marcadas como UTC
+UtcDatetime = Annotated[
+    datetime, AfterValidator(lambda d: d.replace(tzinfo=UTC) if d.tzinfo is None else d)
+]
 
 
 class TeacherSubject(SubjectRead):
@@ -169,3 +182,31 @@ class StudentOverview(BaseModel):
         description="Promedio y materias aprobadas/reprobadas de cada semestre, en el mismo "
         "orden que `subjects`"
     )
+
+
+class GradeChangeRead(BaseModel):
+    """Un cambio en el historial de notas."""
+
+    id: int
+    student: StudentSummary
+    term: int
+    old_value: GradeNumber | None = Field(description="Nota anterior; null = no tenía nota")
+    new_value: GradeNumber | None = Field(description="Nota nueva; null = se borró")
+    changed_by: str | None = Field(description="Quién hizo el cambio (null si ya no existe)")
+    source: ChangeSource = Field(description="manual = en la planilla; import = desde un Excel")
+    import_job_id: str | None
+    created_at: UtcDatetime
+
+    @classmethod
+    def from_row(cls, change, student, changed_by: str | None) -> "GradeChangeRead":
+        return cls(
+            id=change.id,
+            student=StudentSummary.model_validate(student),
+            term=change.term,
+            old_value=change.old_value,
+            new_value=change.new_value,
+            changed_by=changed_by,
+            source=change.source,
+            import_job_id=change.import_job_id,
+            created_at=change.created_at,
+        )

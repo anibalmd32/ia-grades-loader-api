@@ -13,7 +13,7 @@ Crea una universidad de ejemplo lista para enseñar todas las pantallas:
 - Dos semestres: 2025-II cerrado (todas las notas, ya no se pueden modificar) y 2026-I en
   curso (notas parciales).
 - Asignaciones de profesores, matrículas y notas con todas las situaciones posibles
-  (aprobada, reprobada, asegurada, en curso e imposible).
+  (aprobada, reprobada, asegurada, en curso e imposible), con su historial de cambios.
 - Importaciones de Excel del profesor de ejemplo: una confirmada, una pendiente de revisar
   (con avisos y errores) y una fallida.
 - Conversaciones del estudiante de ejemplo con el asistente.
@@ -39,11 +39,13 @@ from app.core.security import hash_password
 from app.db.url import engine_url_and_args
 from app.models import (
     AcademicSettings,
+    ChangeSource,
     ChatChannel,
     Conversation,
     ConversationMessage,
     Enrollment,
     Grade,
+    GradeChange,
     ImportJob,
     Installation,
     JobStatus,
@@ -145,6 +147,7 @@ class SeedSummary:
     enrollments: int = 0
     grades: int = 0
     import_jobs: int = 0
+    grade_changes: int = 0
     conversations: int = 0
 
 
@@ -338,21 +341,20 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
     ]
     for row in confirmed_rows:
         row.current_value = None  # cuando se importó, el lapso 2 estaba vacío
-    db.add(
-        ImportJob(
-            teacher_id=carmen.id,
-            subject_id=mat102.id,
-            status=JobStatus.DONE,
-            file_name="MAT-102 notas lapso 2.xlsx",
-            default_term=2,
-            attempts=1,
-            result=preview(confirmed_rows, [], []),
-            created_at=now - timedelta(days=9, minutes=3),
-            started_at=now - timedelta(days=9, minutes=2),
-            finished_at=now - timedelta(days=9, minutes=1),
-            confirmed_at=now - timedelta(days=9),
-        )
+    confirmed_job = ImportJob(
+        teacher_id=carmen.id,
+        subject_id=mat102.id,
+        status=JobStatus.DONE,
+        file_name="MAT-102 notas lapso 2.xlsx",
+        default_term=2,
+        attempts=1,
+        result=preview(confirmed_rows, [], []),
+        created_at=now - timedelta(days=9, minutes=3),
+        started_at=now - timedelta(days=9, minutes=2),
+        finished_at=now - timedelta(days=9, minutes=1),
+        confirmed_at=now - timedelta(days=9),
     )
+    db.add(confirmed_job)
 
     # 2) Pendiente de revisar: propuesta del lapso 3 con un aviso y dos errores
     proposal = [import_row(s, 3, _grade(rng, 13), row=i + 4) for i, s in enumerate(roster[:-3])]
@@ -423,6 +425,53 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
         )
     )
     summary.import_jobs = 3
+    await db.flush()
+
+    # --- Historial de notas -------------------------------------------------------
+    # Cuándo se cargó cada lapso (días atrás) en cada semestre
+    loaded_days_ago = {
+        CLOSED_SEMESTER: {1: 150, 2: 110, 3: 70},
+        CURRENT_SEMESTER: {1: 40, 2: 12, 3: 2},
+    }
+    semester_of_subject = {
+        s.id: name for name, items in SUBJECTS.items() for s in (subjects[c] for c, _ in items)
+    }
+    changes = []
+    for enrollment, term, value, teacher in pending_grades:
+        when = now - timedelta(
+            days=loaded_days_ago[semester_of_subject[enrollment.subject_id]][term],
+            minutes=rng.randint(0, 600),
+        )
+        from_import = enrollment.subject_id == mat102.id and term == 2
+        changes.append(
+            GradeChange(
+                enrollment_id=enrollment.id,
+                term=term,
+                old_value=None,
+                new_value=value,
+                changed_by_id=teacher.id,
+                source=ChangeSource.IMPORT if from_import else ChangeSource.MANUAL,
+                import_job_id=confirmed_job.id if from_import else None,
+                created_at=confirmed_job.confirmed_at if from_import else when,
+            )
+        )
+    # Correcciones: la nota de Valentina en Física II se cargó mal y se corrigió
+    fis102 = enrollment_of[(demo.id, "FIS-102")]
+    first = next(c for c in changes if c.enrollment_id == fis102.id and c.term == 2)
+    first.new_value = Decimal("9.50")
+    changes.append(
+        GradeChange(
+            enrollment_id=fis102.id,
+            term=2,
+            old_value=Decimal("9.50"),
+            new_value=Decimal("10.50"),
+            changed_by_id=teacher_of["FIS-102"].id,
+            source=ChangeSource.MANUAL,
+            created_at=first.created_at + timedelta(days=1),
+        )
+    )
+    db.add_all(changes)
+    summary.grade_changes = len(changes)
 
     # --- Conversaciones con el asistente ---------------------------------------
     chats = [
@@ -480,7 +529,8 @@ def print_summary(summary: SeedSummary) -> None:
     print("Datos de demostración cargados:")
     print(
         f"  {summary.students} estudiantes, {summary.subjects} materias, "
-        f"{summary.enrollments} matrículas, {summary.grades} notas, "
+        f"{summary.enrollments} matrículas, {summary.grades} notas "
+        f"({summary.grade_changes} cambios en el historial), "
         f"{summary.import_jobs} importaciones, {summary.conversations} conversaciones"
     )
     print(f"\nContraseña de todas las cuentas: {summary.password}\n")

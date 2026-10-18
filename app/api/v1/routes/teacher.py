@@ -9,7 +9,9 @@ from app.core.config import get_settings
 from app.core.errors import InvalidDataError
 from app.models import Role, User
 from app.schemas.academic import SubjectRead
+from app.schemas.common import Page
 from app.schemas.grades import (
+    GradeChangeRead,
     GradesUpdate,
     StudentGrades,
     StudentSummary,
@@ -98,8 +100,32 @@ async def save_subject_grades(
         [(g.student_id, g.term, g.value) for g in data.grades],
         updated_by_id=teacher.id,
         rules=await _rules_for(db, subject),
+        import_job_id=data.import_job_id,
     )
     return await _subject_grades(db, subject)
+
+
+@router.get("/subjects/{subject_id}/grade-history", summary="Historial de cambios de notas")
+async def subject_grade_history(
+    subject_id: int,
+    teacher: Teacher,
+    db: DbSession,
+    student_id: Annotated[int | None, Query(description="Solo los de este estudiante")] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> Page[GradeChangeRead]:
+    """Altas, correcciones y borrados de notas de la materia, del más reciente al más
+    antiguo, con quién los hizo y si fueron a mano o desde una importación de Excel."""
+    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    items, total = await grades.history(
+        db, subject.id, student_id=student_id, limit=limit, offset=offset
+    )
+    return Page(
+        items=[GradeChangeRead.from_row(*row) for row in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 @router.post(
