@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 import pytest
 from sqlalchemy.exc import IntegrityError, OperationalError
 
@@ -11,6 +13,7 @@ from app.models import (
     Subject,
     User,
 )
+from tests.factories import names
 
 # Una restricción CHECK violada llega como IntegrityError en SQLite pero como OperationalError
 # (código 3819) en MySQL; las de UNIQUE / clave primaria son IntegrityError en ambos.
@@ -20,7 +23,7 @@ CHECK_VIOLATION = (IntegrityError, OperationalError)
 def make_student(cedula: int, nationality: Nationality = Nationality.VENEZOLANO) -> User:
     return User(
         role=Role.STUDENT,
-        full_name=f"Estudiante {cedula}",
+        **names(f"Estudiante {cedula}"),
         nationality=nationality,
         cedula=cedula,
         password_hash="x",
@@ -28,7 +31,7 @@ def make_student(cedula: int, nationality: Nationality = Nationality.VENEZOLANO)
 
 
 def make_staff(email: str, role: Role = Role.TEACHER) -> User:
-    return User(role=role, full_name=email, email=email, password_hash="x")
+    return User(role=role, **names(email), email=email, password_hash="x")
 
 
 async def seed_enrollment(session) -> Enrollment:
@@ -61,13 +64,13 @@ async def test_email_unico(session):
 
 
 async def test_personal_requiere_email(session):
-    session.add(User(role=Role.TEACHER, full_name="Sin email", password_hash="x"))
+    session.add(User(role=Role.TEACHER, **names("Sin email"), password_hash="x"))
     with pytest.raises(CHECK_VIOLATION):
         await session.flush()
 
 
 async def test_estudiante_requiere_cedula_y_nacionalidad(session):
-    session.add(User(role=Role.STUDENT, full_name="Sin cédula", cedula=5, password_hash="x"))
+    session.add(User(role=Role.STUDENT, **names("Sin cédula"), cedula=5, password_hash="x"))
     with pytest.raises(CHECK_VIOLATION):
         await session.flush()
 
@@ -87,12 +90,11 @@ async def test_usuario_activo_por_defecto(session):
     assert user.must_change_password is False
 
 
-@pytest.mark.parametrize(("term", "value"), [(0, 10), (4, 10), (1, 0), (1, 21)])
-async def test_nota_fuera_de_rango(session, term, value):
+async def test_la_nota_admite_hasta_100_con_dos_decimales(session):
+    """El rango lo fija la configuración académica (no un CHECK): la columna admite 100."""
     enrollment = await seed_enrollment(session)
-    session.add(Grade(enrollment_id=enrollment.id, term=term, value=value))
-    with pytest.raises(CHECK_VIOLATION):
-        await session.flush()
+    session.add(Grade(enrollment_id=enrollment.id, term=1, value=Decimal("99.75")))
+    await session.flush()
 
 
 async def test_una_nota_por_lapso(session):

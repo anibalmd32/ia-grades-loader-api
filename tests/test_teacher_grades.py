@@ -3,6 +3,7 @@ from sqlalchemy import select
 
 from app.core.security import create_access_token
 from app.models import Grade, Role, User
+from tests.factories import names
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ async def school(client, coord, session):
         subjects[code] = response.json()["id"]
 
     teacher = await client.post(
-        "/teachers", json={"full_name": "Pedro Profe", "email": "p@uni.edu"}, headers=coord
+        "/teachers", json={**names("Pedro Profe"), "email": "p@uni.edu"}, headers=coord
     )
     teacher_id = teacher.json()["user"]["id"]
     await client.put(
@@ -37,7 +38,7 @@ async def school(client, coord, session):
     for cedula, name in [(3, "Carlos"), (1, "Ana"), (2, "Bea")]:
         response = await client.post(
             "/students",
-            json={"full_name": name, "nationality": "V", "cedula": cedula},
+            json={**names(name), "nationality": "V", "cedula": cedula},
             headers=coord,
         )
         students[name] = response.json()["user"]["id"]
@@ -58,7 +59,7 @@ async def school(client, coord, session):
 
 
 def grades_of(body: dict, name: str) -> list:
-    row = next(s for s in body["students"] if s["student"]["full_name"] == name)
+    row = next(s for s in body["students"] if s["student"]["first_name"] == name)
     return [g["value"] for g in row["grades"]], row["average"]
 
 
@@ -104,7 +105,7 @@ async def test_planilla_vacia(client, school):
     mat = school["subjects"]["MAT-101"]
     body = (await client.get(f"/teacher/subjects/{mat}/grades", headers=school["teacher"])).json()
     assert body["subject"]["code"] == "MAT-101"
-    assert [s["student"]["full_name"] for s in body["students"]] == ["Ana", "Bea", "Carlos"]
+    assert [s["student"]["first_name"] for s in body["students"]] == ["Ana", "Bea", "Carlos"]
     assert body["students"][0]["student"]["cedula_display"] == "V-1"
     assert grades_of(body, "Ana") == ([None, None, None], None)
 
@@ -186,7 +187,7 @@ async def test_notas_repetidas_en_la_peticion(client, school):
 
 async def test_estudiante_no_matriculado_no_guarda_nada(client, school, coord, session):
     outsider = await client.post(
-        "/students", json={"full_name": "Zoe", "nationality": "E", "cedula": 9}, headers=coord
+        "/students", json={**names("Zoe"), "nationality": "E", "cedula": 9}, headers=coord
     )
     outsider_id = outsider.json()["user"]["id"]
     response = await put_grades(

@@ -38,7 +38,7 @@ async def test_materias_por_profesor_y_estudiante(client, campus, coord):
         "Pedro Profe": 2,
     }
     students = (await client.get("/students", headers=coord)).json()["items"]
-    assert {s["full_name"]: s["subjects_count"] for s in students} == {"Ana": 3, "Beto": 1}
+    assert {s["first_name"]: s["subjects_count"] for s in students} == {"Ana": 3, "Beto": 1}
 
     ana = campus["students"]["Ana"]["id"]
     detail = (await client.get(f"/students/{ana}", headers=coord)).json()

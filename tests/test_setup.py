@@ -3,8 +3,9 @@ from sqlalchemy import func, select
 
 from app.models import Installation, Role, User
 from app.services import setup as setup_service
+from tests.factories import names
 
-ADMIN = {"full_name": "Admin Principal", "email": "Admin@Uni.edu", "password": "clave-segura"}
+ADMIN = {**names("Admin Principal"), "email": "Admin@Uni.edu", "password": "clave-segura"}
 
 
 async def test_flujo_de_instalacion(client):
@@ -39,7 +40,7 @@ async def test_carrera_de_instalacion_no_deja_usuarios_huerfanos(sessionmaker, m
     """Simula dos instalaciones simultáneas: ambas pasan el chequeo inicial y la
     restricción de la tabla installation (id = 1) es la que frena a la segunda."""
     async with sessionmaker() as db:
-        await setup_service.install(db, "Admin 1", "a1@uni.edu", "clave-segura")
+        await setup_service.install(db, "Admin", "1", "a1@uni.edu", "clave-segura")
 
     async def never_installed(_db):
         return False
@@ -47,7 +48,7 @@ async def test_carrera_de_instalacion_no_deja_usuarios_huerfanos(sessionmaker, m
     monkeypatch.setattr(setup_service, "is_installed", never_installed)
     async with sessionmaker() as db:
         with pytest.raises(setup_service.AlreadyInstalledError):
-            await setup_service.install(db, "Admin 2", "a2@uni.edu", "clave-segura")
+            await setup_service.install(db, "Admin", "2", "a2@uni.edu", "clave-segura")
 
     async with sessionmaker() as db:
         admins = await db.scalar(

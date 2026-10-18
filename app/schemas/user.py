@@ -5,7 +5,16 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from app.models import Nationality, Role
 from app.schemas.common import CedulaNumber, Email
 
-FullName = Annotated[str, AfterValidator(str.strip), Field(min_length=3, max_length=150)]
+FirstName = Annotated[
+    str,
+    AfterValidator(str.strip),
+    Field(min_length=1, max_length=100, description="Nombre(s)", examples=["Ana María"]),
+]
+LastName = Annotated[
+    str,
+    AfterValidator(str.strip),
+    Field(min_length=1, max_length=100, description="Apellido(s)", examples=["Pérez Gómez"]),
+]
 
 
 class UserRead(BaseModel):
@@ -13,7 +22,9 @@ class UserRead(BaseModel):
 
     id: int
     role: Role
-    full_name: str
+    first_name: str
+    last_name: str
+    full_name: str = Field(description="Nombre y apellido")
     email: str | None
     nationality: Nationality | None
     cedula: int | None
@@ -32,24 +43,28 @@ class UserRead(BaseModel):
 class StaffCreate(BaseModel):
     """Alta de coordinador o profesor."""
 
-    full_name: FullName
+    first_name: FirstName
+    last_name: LastName
     email: Email
 
 
 class StaffUpdate(BaseModel):
-    full_name: FullName | None = None
+    first_name: FirstName | None = None
+    last_name: LastName | None = None
     email: Email | None = None
     is_active: bool | None = None
 
 
 class StudentCreate(BaseModel):
-    full_name: FullName
+    first_name: FirstName
+    last_name: LastName
     nationality: Nationality = Field(description="V = venezolano, E = extranjero")
     cedula: CedulaNumber
 
 
 class StudentUpdate(BaseModel):
-    full_name: FullName | None = None
+    first_name: FirstName | None = None
+    last_name: LastName | None = None
     nationality: Nationality | None = None
     cedula: CedulaNumber | None = None
     is_active: bool | None = None

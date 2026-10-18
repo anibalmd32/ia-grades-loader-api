@@ -26,7 +26,7 @@ MAX_MESSAGE_LENGTH = 4096
 HELP = (
     "Soy el asistente de notas. Pregúntame lo que quieras sobre tus notas, por ejemplo:\n"
     "• ¿Cómo voy este semestre?\n"
-    "• ¿Cuánto necesito en el 3er lapso de Física para aprobar?\n\n"
+    "• ¿Cuánto necesito en lo que me falta de Física para aprobar?\n\n"
     "Comandos:\n"
     "/nueva — empezar una conversación nueva\n"
     "/desvincular — desvincular este Telegram de tu cuenta\n"
@@ -85,7 +85,7 @@ class TelegramBotService:
                 except AppError as exc:
                     return html.escape(exc.detail)
                 return (
-                    f"¡Listo, {html.escape(student.full_name)}! Tu cuenta quedó vinculada.\n\n"
+                    f"¡Listo, {html.escape(student.first_name)}! Tu cuenta quedó vinculada.\n\n"
                     + HELP
                 )
             if await telegram_link.student_for_chat(db, chat_id) is None:

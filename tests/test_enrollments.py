@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import Enrollment, Grade, Role
+from tests.factories import names
 
 
 @pytest.fixture
@@ -24,7 +25,7 @@ async def data(client, coord):
     for cedula, name in [(1, "Ana"), (2, "Bea"), (3, "Carlos")]:
         response = await client.post(
             "/students",
-            json={"full_name": name, "nationality": "V", "cedula": cedula},
+            json={**names(name), "nationality": "V", "cedula": cedula},
             headers=coord,
         )
         students[name] = response.json()["user"]["id"]
@@ -64,13 +65,13 @@ async def test_matricula_en_lote_por_materia(client, coord, data):
     assert again.json() == {"added": 0, "already_enrolled": 2}
 
     listed = (await client.get(f"/subjects/{mat}/students", headers=coord)).json()
-    assert [s["full_name"] for s in listed] == ["Ana", "Bea", "Carlos"]
+    assert [s["first_name"] for s in listed] == ["Ana", "Bea", "Carlos"]
 
 
 async def test_lote_valida_ids(client, coord, data):
     mat = data["subjects"]["MAT-101"]
     teacher = await client.post(
-        "/teachers", json={"full_name": "Pedro", "email": "p@uni.edu"}, headers=coord
+        "/teachers", json={**names("Pedro"), "email": "p@uni.edu"}, headers=coord
     )
     teacher_id = teacher.json()["user"]["id"]
     ana = data["students"]["Ana"]

@@ -23,6 +23,7 @@ from app.models import (
 from app.models.import_job import utcnow
 from app.services.import_jobs import claim_next, enqueue, mark_confirmed, recover_stale
 from app.worker import ImportWorker
+from tests.factories import names
 from tests.import_helpers import SAMPLE, FakeLLM, entry, upload
 
 
@@ -63,10 +64,10 @@ async def seed_course(sessionmaker) -> tuple[int, int]:
     """Profesor con MAT-101 y la estudiante V-1 matriculada. Devuelve (profesor, materia)."""
     async with sessionmaker() as db:
         subject = Subject(code="MAT-101", name="Matemática I", semester=Semester(name="2026-I"))
-        teacher = User(role=Role.TEACHER, full_name="Pedro", email="p@uni.edu", password_hash="x")
+        teacher = User(role=Role.TEACHER, **names("Pedro"), email="p@uni.edu", password_hash="x")
         ana = User(
             role=Role.STUDENT,
-            full_name="Ana",
+            **names("Ana"),
             nationality=Nationality.VENEZOLANO,
             cedula=1,
             password_hash="x",

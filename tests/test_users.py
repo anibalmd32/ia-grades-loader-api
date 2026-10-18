@@ -1,6 +1,7 @@
 import pytest
 
 from app.models import Role
+from tests.factories import names
 
 
 @pytest.fixture
@@ -14,7 +15,7 @@ async def coord(login_as):
 
 
 def student_payload(cedula=12345678, nationality="V", name="Ana Pérez") -> dict:
-    return {"full_name": name, "nationality": nationality, "cedula": cedula}
+    return {**names(name), "nationality": nationality, "cedula": cedula}
 
 
 # --- Permisos ----------------------------------------------------------------
@@ -41,7 +42,7 @@ async def test_quien_gestiona_que(client, login_as, role, coordinators, teachers
 
 async def test_super_admin_crea_coordinador_que_puede_entrar(client, admin):
     response = await client.post(
-        "/coordinators", json={"full_name": "Carla Coord", "email": "Carla@Uni.edu"}, headers=admin
+        "/coordinators", json={**names("Carla Coord"), "email": "Carla@Uni.edu"}, headers=admin
     )
     assert response.status_code == 201
     body = response.json()
@@ -74,9 +75,9 @@ async def test_coordinador_crea_estudiante_que_entra_con_cedula(client, coord):
 
 
 async def test_duplicados(client, coord):
-    await client.post("/teachers", json={"full_name": "Pedro", "email": "p@uni.edu"}, headers=coord)
+    await client.post("/teachers", json={**names("Pedro"), "email": "p@uni.edu"}, headers=coord)
     dup_email = await client.post(
-        "/teachers", json={"full_name": "Pedro Dos", "email": "P@uni.edu"}, headers=coord
+        "/teachers", json={**names("Pedro Dos"), "email": "P@uni.edu"}, headers=coord
     )
     assert dup_email.status_code == 409
 
@@ -90,7 +91,7 @@ async def test_duplicados(client, coord):
 
 async def test_validaciones_de_entrada(client, coord):
     bad_email = await client.post(
-        "/teachers", json={"full_name": "Pedro", "email": "no-es-email"}, headers=coord
+        "/teachers", json={**names("Pedro"), "email": "no-es-email"}, headers=coord
     )
     assert bad_email.status_code == 422
     bad_type = await client.post("/students", json=student_payload(nationality="X"), headers=coord)
@@ -105,12 +106,15 @@ async def test_validaciones_de_entrada(client, coord):
 async def test_listar_y_buscar_estudiantes(client, coord):
     await client.post("/students", json=student_payload(111, name="Ana Pérez"), headers=coord)
     await client.post("/students", json=student_payload(222, name="Luis Gómez"), headers=coord)
-    teacher = {"full_name": "Ana Profe", "email": "a@uni.edu"}
+    teacher = {**names("Ana Profe"), "email": "a@uni.edu"}
     await client.post("/teachers", json=teacher, headers=coord)
 
     all_students = (await client.get("/students", headers=coord)).json()
     assert all_students["total"] == 2
-    assert [u["full_name"] for u in all_students["items"]] == ["Ana Pérez", "Luis Gómez"]
+    assert [u["full_name"] for u in all_students["items"]] == [
+        "Luis Gómez",
+        "Ana Pérez",
+    ]  # por apellido
 
     by_name = (await client.get("/students?q=ana", headers=coord)).json()
     assert [u["full_name"] for u in by_name["items"]] == ["Ana Pérez"]
@@ -121,7 +125,7 @@ async def test_listar_y_buscar_estudiantes(client, coord):
 
 async def test_ids_de_otro_rol_no_se_encuentran(client, coord):
     created = await client.post(
-        "/teachers", json={"full_name": "Pedro", "email": "p@uni.edu"}, headers=coord
+        "/teachers", json={**names("Pedro"), "email": "p@uni.edu"}, headers=coord
     )
     teacher_id = created.json()["user"]["id"]
     assert (await client.get(f"/students/{teacher_id}", headers=coord)).status_code == 404
@@ -144,7 +148,7 @@ async def test_editar_estudiante_valida_cedula(client, coord):
 
 
 async def test_desactivar_impide_el_acceso(client, coord):
-    teacher = {"full_name": "Pedro", "email": "p@uni.edu"}
+    teacher = {**names("Pedro"), "email": "p@uni.edu"}
     created = (await client.post("/teachers", json=teacher, headers=coord)).json()
     teacher_id = created["user"]["id"]
     off = await client.patch(f"/teachers/{teacher_id}", json={"is_active": False}, headers=coord)

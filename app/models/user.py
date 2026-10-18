@@ -1,6 +1,7 @@
 from enum import StrEnum
 
 from sqlalchemy import BigInteger, Boolean, CheckConstraint, Enum, Integer, String, UniqueConstraint
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin
@@ -40,7 +41,8 @@ class User(TimestampMixin, Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     role: Mapped[Role] = mapped_column(Enum(Role, name="user_role", values_callable=_enum_values))
-    full_name: Mapped[str] = mapped_column(String(150))
+    first_name: Mapped[str] = mapped_column(String(100))
+    last_name: Mapped[str] = mapped_column(String(100))
     # Credencial del personal (super admin, coordinador, profesor). Se guarda en minúsculas.
     email: Mapped[str | None] = mapped_column(String(255), unique=True)
     # Credencial de los estudiantes: tipo (V/E) + número de cédula sin puntos ni letras
@@ -55,6 +57,16 @@ class User(TimestampMixin, Base):
     telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     # Se incrementa al cambiar o restablecer la contraseña: invalida todas las sesiones
     token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+
+    @hybrid_property
+    def full_name(self) -> str:
+        """ "Nombre Apellido". También sirve en consultas (búsqueda por nombre completo)."""
+        return f"{self.first_name} {self.last_name}".strip()
+
+    @full_name.inplace.expression
+    @classmethod
+    def _full_name_expression(cls):
+        return cls.first_name + " " + cls.last_name
 
     @property
     def is_staff(self) -> bool:

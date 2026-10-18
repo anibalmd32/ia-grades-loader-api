@@ -26,6 +26,7 @@ from app.db.base import Base
 from app.db.session import get_db
 from app.main import app as fastapi_app
 from app.models import Nationality, Role, User
+from tests.factories import names
 
 
 @pytest.fixture(autouse=True, scope="session")
@@ -171,9 +172,10 @@ def create_user(session):
             fields.setdefault("cedula", 12345678)
         else:
             fields.setdefault("email", f"{role.value}@uni.edu")
+        if "first_name" not in fields:
+            fields.update(names(fields.pop("full_name", f"Usuario {role.value}")))
         user = User(
             role=role,
-            full_name=fields.pop("full_name", f"Usuario {role.value}"),
             password_hash=hash_password(password),
             **fields,
         )
@@ -208,7 +210,7 @@ async def course(client, login_as, session):
     )
     subject_id = subject.json()["id"]
     teacher = await client.post(
-        "/teachers", json={"full_name": "Pedro", "email": "p@uni.edu"}, headers=coord
+        "/teachers", json={**names("Pedro"), "email": "p@uni.edu"}, headers=coord
     )
     teacher_id = teacher.json()["user"]["id"]
     await client.put(
@@ -223,7 +225,7 @@ async def course(client, login_as, session):
     ]:
         response = await client.post(
             "/students",
-            json={"full_name": name, "nationality": nationality, "cedula": cedula},
+            json={**names(name), "nationality": nationality, "cedula": cedula},
             headers=coord,
         )
         students[name] = response.json()["user"]["id"]
@@ -262,7 +264,7 @@ async def campus(client, login_as, session):
         ("Pedro Profe", "p@uni.edu", [mat["id"], fis["id"]]),
         ("Laura Profe", "l@uni.edu", [mat["id"]]),
     ]:
-        teacher = await post("/teachers", {"full_name": name, "email": email})
+        teacher = await post("/teachers", {**names(name), "email": email})
         teacher_id = teacher["user"]["id"]
         await client.put(
             f"/teachers/{teacher_id}/subjects", json={"subject_ids": subjects}, headers=coord
@@ -276,7 +278,7 @@ async def campus(client, login_as, session):
         ("Ana", 1, [mat["id"], fis["id"], mat2["id"]]),
         ("Beto", 2, [mat["id"]]),
     ]:
-        created = await post("/students", {"full_name": name, "nationality": "V", "cedula": cedula})
+        created = await post("/students", {**names(name), "nationality": "V", "cedula": cedula})
         student_id = created["user"]["id"]
         await post(f"/students/{student_id}/subjects", {"subject_ids": subjects})
         user = await session.get(User, student_id)

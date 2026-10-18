@@ -80,7 +80,8 @@ async def list_users(
             conditions.append(User.cedula == int(digits))
         query = query.where(or_(*conditions))
     total = await db.scalar(select(func.count()).select_from(query.subquery()))
-    items = await db.scalars(query.order_by(User.full_name).limit(limit).offset(offset))
+    query = query.order_by(User.last_name, User.first_name)
+    items = await db.scalars(query.limit(limit).offset(offset))
     return list(items), total or 0
 
 

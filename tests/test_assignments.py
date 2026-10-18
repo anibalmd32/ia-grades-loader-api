@@ -1,6 +1,7 @@
 import pytest
 
 from app.models import Role
+from tests.factories import names
 
 
 @pytest.fixture
@@ -20,7 +21,7 @@ async def setup_data(client, coord):
         )
         subjects.append(response.json()["id"])
     teacher = await client.post(
-        "/teachers", json={"full_name": "Pedro Profe", "email": "p@uni.edu"}, headers=coord
+        "/teachers", json={**names("Pedro Profe"), "email": "p@uni.edu"}, headers=coord
     )
     return {"teacher": teacher.json()["user"]["id"], "subjects": subjects}
 
@@ -59,7 +60,7 @@ async def test_materias_inexistentes(client, coord, setup_data):
 
 async def test_solo_a_profesores(client, coord, setup_data):
     student = await client.post(
-        "/students", json={"full_name": "Ana", "nationality": "V", "cedula": 1}, headers=coord
+        "/students", json={**names("Ana"), "nationality": "V", "cedula": 1}, headers=coord
     )
     student_id = student.json()["user"]["id"]
     response = await put_subjects(client, coord, student_id, setup_data["subjects"])

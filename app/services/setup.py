@@ -17,13 +17,16 @@ async def is_installed(db: AsyncSession) -> bool:
     return await db.scalar(select(Installation.id).limit(1)) is not None
 
 
-async def install(db: AsyncSession, full_name: str, email: str, password: str) -> User:
+async def install(
+    db: AsyncSession, first_name: str, last_name: str, email: str, password: str
+) -> User:
     if await is_installed(db):
         raise AlreadyInstalledError
 
     admin = User(
         role=Role.SUPER_ADMIN,
-        full_name=full_name,
+        first_name=first_name,
+        last_name=last_name,
         email=email.lower(),
         password_hash=hash_password(password),
     )

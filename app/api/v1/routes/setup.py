@@ -27,7 +27,9 @@ async def setup(data: SetupRequest, db: DbSession) -> TokenResponse:
     Una vez instalado, responde **404** igual que una ruta inexistente.
     """
     try:
-        admin = await setup_service.install(db, data.full_name, data.email, data.password)
+        admin = await setup_service.install(
+            db, data.first_name, data.last_name, data.email, data.password
+        )
     except setup_service.AlreadyInstalledError:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Not Found") from None
     return auth_service.issue_token(admin)

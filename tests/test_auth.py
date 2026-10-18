@@ -8,6 +8,7 @@ from app.api.deps import require_roles
 from app.core.security import create_access_token
 from app.db.session import get_db
 from app.models import Nationality, RevokedToken, Role
+from tests.factories import names
 
 
 def bearer(token: str) -> dict[str, str]:
@@ -79,7 +80,7 @@ async def test_token_oauth2_para_swagger(client, create_user):
 
 
 async def test_me(client, create_user):
-    await create_user(Role.STUDENT, cedula=1234, full_name="Ana Pérez")
+    await create_user(Role.STUDENT, cedula=1234, **names("Ana Pérez"))
     token = (await login_student(client, 1234)).json()["access_token"]
     me = (await client.get("/auth/me", headers=bearer(token))).json()
     assert me["full_name"] == "Ana Pérez"

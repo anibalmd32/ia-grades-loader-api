@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 
 from app.schemas.common import Email, NewPassword
+from app.schemas.user import FirstName, LastName
 
 
 class SetupStatus(BaseModel):
@@ -8,6 +9,7 @@ class SetupStatus(BaseModel):
 
 
 class SetupRequest(BaseModel):
-    full_name: str = Field(min_length=3, max_length=150)
+    first_name: FirstName
+    last_name: LastName
     email: Email
     password: NewPassword

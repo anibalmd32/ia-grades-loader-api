@@ -63,7 +63,7 @@ async def list_subject_students(db: AsyncSession, subject_id: int) -> list[User]
         select(User)
         .join(Enrollment, Enrollment.student_id == User.id)
         .where(Enrollment.subject_id == subject_id)
-        .order_by(User.full_name)
+        .order_by(User.last_name, User.first_name)
     )
     return list(await db.scalars(query))
 
