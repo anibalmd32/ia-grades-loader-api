@@ -120,6 +120,9 @@ async def test_un_trabajo_solo_se_reclama_una_vez(client, course, sessionmaker):
     first = (await upload(client, course)).json()["id"]
     second = (await upload(client, course)).json()["id"]
     async with sessionmaker() as db:
+        # MySQL guarda DATETIME al segundo: se separan para que el orden FIFO no sea un empate
+        (await db.get(ImportJob, first)).created_at = utcnow() - timedelta(seconds=5)
+        await db.commit()
         assert await claim_next(db) == first
         assert await claim_next(db) == second
         assert await claim_next(db) is None
