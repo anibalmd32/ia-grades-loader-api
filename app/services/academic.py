@@ -4,7 +4,7 @@ from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
-from app.models import Enrollment, Semester, Subject
+from app.models import Enrollment, Semester, Subject, TeacherSubject
 
 # --- Semestres ---------------------------------------------------------------
 
@@ -26,6 +26,16 @@ async def _ensure_semester_name_free(db: AsyncSession, name: str, exclude_id: in
 
 async def list_semesters(db: AsyncSession) -> list[Semester]:
     return list(await db.scalars(select(Semester).order_by(Semester.name)))
+
+
+async def subjects_per_semester(db: AsyncSession, semester_ids: list[int]) -> dict[int, int]:
+    """Número de materias de cada semestre (una sola consulta para todo el listado)."""
+    rows = await db.execute(
+        select(Subject.semester_id, func.count())
+        .where(Subject.semester_id.in_(semester_ids))
+        .group_by(Subject.semester_id)
+    )
+    return {sid: 0 for sid in semester_ids} | dict(rows.all())
 
 
 async def create_semester(db: AsyncSession, name: str) -> Semester:
@@ -87,6 +97,20 @@ async def list_subjects(
     total = await db.scalar(select(func.count()).select_from(query.subquery()))
     items = await db.scalars(query.order_by(Subject.code).limit(limit).offset(offset))
     return list(items), total or 0
+
+
+async def subject_counts(db: AsyncSession, subject_ids: list[int]) -> dict[int, tuple[int, int]]:
+    """(profesores, estudiantes) de cada materia, en dos consultas para todo el listado."""
+    counts = []
+    for model in (TeacherSubject, Enrollment):
+        rows = await db.execute(
+            select(model.subject_id, func.count())
+            .where(model.subject_id.in_(subject_ids))
+            .group_by(model.subject_id)
+        )
+        counts.append(dict(rows.all()))
+    teachers, students = counts
+    return {sid: (teachers.get(sid, 0), students.get(sid, 0)) for sid in subject_ids}
 
 
 async def create_subject(db: AsyncSession, semester_id: int, code: str, name: str) -> Subject:

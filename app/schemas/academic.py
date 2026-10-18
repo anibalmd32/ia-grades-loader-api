@@ -20,11 +20,17 @@ class SemesterUpdate(BaseModel):
     name: SemesterName
 
 
+# Los recuentos solo se calculan en el listado y el detalle del propio recurso; dentro de
+# otras respuestas (p. ej. la materia de una nota) van en null para no hacer más consultas.
+COUNT_NOTE = " Solo en el listado y el detalle; null dentro de otras respuestas."
+
+
 class SemesterRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     name: str
+    subjects_count: int | None = Field(default=None, description="Materias." + COUNT_NOTE)
 
 
 class SubjectCreate(BaseModel):
@@ -46,6 +52,12 @@ class SubjectRead(BaseModel):
     code: str
     name: str
     semester: SemesterRead
+    teachers_count: int | None = Field(
+        default=None, description="Profesores asignados." + COUNT_NOTE
+    )
+    students_count: int | None = Field(
+        default=None, description="Estudiantes matriculados." + COUNT_NOTE
+    )
 
 
 class TeacherSubjectsUpdate(BaseModel):

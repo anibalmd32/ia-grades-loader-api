@@ -12,9 +12,17 @@ router = APIRouter(
 )
 
 
+def _with_count(semester, counts: dict[int, int]) -> SemesterRead:
+    return SemesterRead.model_validate(semester).model_copy(
+        update={"subjects_count": counts[semester.id]}
+    )
+
+
 @router.get("", summary="Listar semestres")
 async def list_semesters(db: DbSession) -> list[SemesterRead]:
-    return [SemesterRead.model_validate(s) for s in await academic.list_semesters(db)]
+    semesters = await academic.list_semesters(db)
+    counts = await academic.subjects_per_semester(db, [s.id for s in semesters])
+    return [_with_count(s, counts) for s in semesters]
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, summary="Crear semestre")
@@ -24,7 +32,8 @@ async def create_semester(data: SemesterCreate, db: DbSession) -> SemesterRead:
 
 @router.get("/{semester_id}", summary="Ver semestre")
 async def get_semester(semester_id: int, db: DbSession) -> SemesterRead:
-    return SemesterRead.model_validate(await academic.get_semester(db, semester_id))
+    semester = await academic.get_semester(db, semester_id)
+    return _with_count(semester, await academic.subjects_per_semester(db, [semester.id]))
 
 
 @router.patch("/{semester_id}", summary="Renombrar semestre")

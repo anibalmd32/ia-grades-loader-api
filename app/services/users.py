@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
 from app.core.security import generate_password, hash_password
-from app.models import Nationality, Role, User
+from app.models import Enrollment, Nationality, Role, TeacherSubject, User
 
 ROLE_NAMES = {
     Role.COORDINATOR: "Coordinador",
@@ -21,6 +21,22 @@ async def get_user(db: AsyncSession, role: Role, user_id: int) -> User:
     if user is None or user.role != role:
         raise NotFoundError(f"{ROLE_NAMES[role]} no encontrado")
     return user
+
+
+async def subjects_per_user(db: AsyncSession, role: Role, user_ids: list[int]) -> dict[int, int]:
+    """Materias asignadas (profesores) o matriculadas (estudiantes) de cada usuario, en una
+    sola consulta. Los coordinadores no tienen materias: devuelve {}."""
+    match role:
+        case Role.TEACHER:
+            column = TeacherSubject.teacher_id
+        case Role.STUDENT:
+            column = Enrollment.student_id
+        case _:
+            return {}
+    rows = await db.execute(
+        select(column, func.count()).where(column.in_(user_ids)).group_by(column)
+    )
+    return {uid: 0 for uid in user_ids} | dict(rows.all())
 
 
 async def _ensure_unique(db: AsyncSession, fields: dict[str, Any], exclude_id: int | None = None):

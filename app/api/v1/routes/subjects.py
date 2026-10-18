@@ -26,11 +26,19 @@ async def list_subjects(
     items, total = await academic.list_subjects(
         db, semester_id=semester_id, q=q, limit=limit, offset=offset
     )
+    counts = await academic.subject_counts(db, [s.id for s in items])
     return Page(
-        items=[SubjectRead.model_validate(s) for s in items],
+        items=[_with_counts(s, counts) for s in items],
         total=total,
         limit=limit,
         offset=offset,
+    )
+
+
+def _with_counts(subject, counts: dict[int, tuple[int, int]]) -> SubjectRead:
+    teachers, students = counts[subject.id]
+    return SubjectRead.model_validate(subject).model_copy(
+        update={"teachers_count": teachers, "students_count": students}
     )
 
 
@@ -42,7 +50,8 @@ async def create_subject(data: SubjectCreate, db: DbSession) -> SubjectRead:
 
 @router.get("/{subject_id}", summary="Ver materia")
 async def get_subject(subject_id: int, db: DbSession) -> SubjectRead:
-    return SubjectRead.model_validate(await academic.get_subject(db, subject_id))
+    subject = await academic.get_subject(db, subject_id)
+    return _with_counts(subject, await academic.subject_counts(db, [subject.id]))
 
 
 @router.patch("/{subject_id}", summary="Modificar materia")

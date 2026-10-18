@@ -21,6 +21,12 @@ class UserRead(BaseModel):
     is_active: bool
     must_change_password: bool
     telegram_linked: bool
+    subjects_count: int | None = Field(
+        default=None,
+        description="Materias asignadas (profesor) o matriculadas (estudiante). Solo en el "
+        "listado y el detalle de profesores y estudiantes; null en coordinadores y dentro de "
+        "otras respuestas.",
+    )
 
 
 class StaffCreate(BaseModel):

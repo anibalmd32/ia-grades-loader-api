@@ -20,6 +20,11 @@ from app.schemas.user import (
 from app.services import users
 
 
+def _with_count(user, counts: dict[int, int]) -> UserRead:
+    # Coordinadores: no tienen materias y el recuento queda en null
+    return UserRead.model_validate(user).model_copy(update={"subjects_count": counts.get(user.id)})
+
+
 def build_user_router(
     *,
     role: Role,
@@ -44,8 +49,9 @@ def build_user_router(
         items, total = await users.list_users(
             db, role, q=q, is_active=is_active, limit=limit, offset=offset
         )
+        counts = await users.subjects_per_user(db, role, [u.id for u in items])
         return Page(
-            items=[UserRead.model_validate(u) for u in items],
+            items=[_with_count(u, counts) for u in items],
             total=total,
             limit=limit,
             offset=offset,
@@ -60,7 +66,8 @@ def build_user_router(
 
     @router.get("/{user_id}", summary=f"Ver {singular}")
     async def get_user(user_id: int, db: DbSession) -> UserRead:
-        return UserRead.model_validate(await users.get_user(db, role, user_id))
+        user = await users.get_user(db, role, user_id)
+        return _with_count(user, await users.subjects_per_user(db, role, [user.id]))
 
     @router.patch("/{user_id}", summary=f"Modificar o desactivar {singular}")
     async def update_user(user_id: int, data: update_schema, db: DbSession) -> UserRead:

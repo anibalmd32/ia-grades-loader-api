@@ -44,7 +44,9 @@ async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
 async def my_subjects(teacher: Teacher, db: DbSession) -> list[TeacherSubject]:
     rows = await grades.teacher_subjects_with_counts(db, teacher.id)
     return [
-        TeacherSubject(**SubjectRead.model_validate(subject).model_dump(), students_count=count)
+        TeacherSubject(
+            **{**SubjectRead.model_validate(subject).model_dump(), "students_count": count}
+        )
         for subject, count in rows
     ]
 
