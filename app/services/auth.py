@@ -12,7 +12,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.models import STAFF_ROLES, Nationality, RevokedToken, Role, User
+from app.models import STAFF_ROLES, RevokedToken, Role, User
 from app.schemas.auth import TokenResponse
 
 
@@ -43,7 +43,7 @@ async def authenticate_staff(db: AsyncSession, email: str, password: str) -> Use
 
 
 async def authenticate_student(
-    db: AsyncSession, nationality: Nationality, cedula: int, password: str
+    db: AsyncSession, nationality: str, cedula: int, password: str
 ) -> User:
     user = await db.scalar(
         select(User).where(

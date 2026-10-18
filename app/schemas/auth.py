@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 
-from app.models import Nationality, Role
-from app.schemas.common import CedulaNumber, Email, NewPassword
+from app.models import Role
+from app.schemas.common import CedulaNumber, DocumentCode, Email, NewPassword
 
 
 class StaffLogin(BaseModel):
@@ -14,7 +14,7 @@ class StaffLogin(BaseModel):
 class StudentLogin(BaseModel):
     """Inicio de sesión de estudiantes."""
 
-    nationality: Nationality = Field(description="V = venezolano, E = extranjero")
+    nationality: DocumentCode
     cedula: CedulaNumber
     password: str = Field(min_length=1, max_length=128)
 

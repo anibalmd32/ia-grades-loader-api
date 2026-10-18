@@ -46,7 +46,8 @@ OPENAPI_TAGS = [
     {
         "name": "Autenticación",
         "description": (
-            "Personal: email y contraseña. Estudiantes: tipo (V/E), cédula y contraseña."
+            "Personal: email y contraseña. Estudiantes: tipo de documento (V/E u otros "
+            "configurados), número y contraseña."
         ),
     },
     {

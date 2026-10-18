@@ -5,14 +5,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app.api.deps import CurrentToken, CurrentUser, DbSession
-from app.models import Nationality
 from app.schemas.auth import ChangePasswordRequest, StaffLogin, StudentLogin, TokenResponse
 from app.schemas.user import UserRead
 from app.services import auth as auth_service
 
 router = APIRouter(prefix="/auth", tags=["Autenticación"])
 
-_CEDULA_RE = re.compile(r"^\s*([VE])[\s\-]*(\d[\d.]*)\s*$", re.IGNORECASE)
+_CEDULA_RE = re.compile(r"^\s*([A-Z]{1,3})[\s\-]*(\d[\d.]*)\s*$", re.IGNORECASE)
 
 _INVALID = HTTPException(status.HTTP_401_UNAUTHORIZED, "Credenciales incorrectas")
 _DISABLED = HTTPException(status.HTTP_403_FORBIDDEN, "La cuenta está desactivada")
@@ -55,7 +54,7 @@ async def login_oauth2(
     match = _CEDULA_RE.match(form.username)
     if match is None:
         raise _INVALID
-    nationality = Nationality(match.group(1).upper())
+    nationality = match.group(1).upper()
     cedula = int(match.group(2).replace(".", ""))
     return await _login(auth_service.authenticate_student(db, nationality, cedula, form.password))
 

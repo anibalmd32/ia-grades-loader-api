@@ -27,6 +27,18 @@ CedulaNumber = Annotated[
 
 Email = Annotated[EmailStr, AfterValidator(str.lower)]
 
+# Tipo de documento (V, E... los configura el super admin en /settings/academic)
+DocumentCode = Annotated[
+    str,
+    AfterValidator(lambda v: v.strip().upper()),
+    Field(
+        pattern=r"^\s*[A-Za-z]{1,3}\s*$",
+        description="Tipo de documento (p. ej. V = venezolano, E = extranjero); los válidos "
+        "están en GET /settings/academic",
+        examples=["V"],
+    ),
+]
+
 NewPassword = Annotated[str, Field(min_length=8, max_length=128)]
 
 

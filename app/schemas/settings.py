@@ -4,6 +4,7 @@ from typing import Annotated
 from pydantic import AfterValidator, BaseModel, Field, PlainSerializer, model_validator
 
 from app.models import PeriodType
+from app.schemas.common import DocumentCode
 from app.services.rules import MAX_DECIMALS, MAX_GRADE_LIMIT, MAX_TERMS, GradingRules
 
 _AsNumber = PlainSerializer(float, return_type=float, when_used="json")
@@ -12,6 +13,11 @@ ScaleNumber = Annotated[
 ]
 Weight = Annotated[Decimal, Field(gt=0, le=100, max_digits=5, decimal_places=2), _AsNumber]
 Label = Annotated[str, AfterValidator(str.strip)]
+
+
+class DocumentType(BaseModel):
+    code: DocumentCode = Field(description="Letra(s) que preceden al número: V, E, P...")
+    name: Label = Field(min_length=2, max_length=40, examples=["Venezolano"])
 
 
 class AcademicSettingsBase(BaseModel):
@@ -48,6 +54,18 @@ class AcademicSettingsBase(BaseModel):
         description="true: la definitiva se redondea al entero (9.5 → 10) antes de decidir si "
         "aprueba"
     )
+    document_label: Label = Field(
+        min_length=2,
+        max_length=30,
+        description="Cómo se llama el documento con que entran los estudiantes",
+        examples=["Cédula", "DNI"],
+    )
+    document_types: list[DocumentType] = Field(
+        min_length=1,
+        max_length=10,
+        description="Tipos de documento admitidos (el login de estudiantes los ofrece en este "
+        "orden)",
+    )
 
 
 class AcademicSettingsUpdate(AcademicSettingsBase):
@@ -71,6 +89,9 @@ class AcademicSettingsUpdate(AcademicSettingsBase):
                 raise ValueError(
                     f"La nota {label} tiene más decimales de los admitidos ({self.grade_decimals})"
                 )
+        codes = [t.code for t in self.document_types]
+        if len(codes) != len(set(codes)):
+            raise ValueError("Hay tipos de documento con el mismo código")
         if self.term_weights is not None:
             if len(self.term_weights) != self.terms_count:
                 raise ValueError(
@@ -92,6 +113,8 @@ class AcademicSettingsUpdate(AcademicSettingsBase):
             passing_grade=self.passing_grade,
             grade_decimals=self.grade_decimals,
             round_final_grade=self.round_final_grade,
+            document_label=self.document_label,
+            document_types=tuple((t.code, t.name) for t in self.document_types),
         )
 
 
@@ -161,6 +184,8 @@ class AcademicSettingsRead(AcademicSettingsBase):
             passing_grade=rules.passing_grade,
             grade_decimals=rules.grade_decimals,
             round_final_grade=rules.round_final_grade,
+            document_label=rules.document_label,
+            document_types=[DocumentType(code=c, name=n) for c, n in rules.document_types],
             period_label=rules.period_label,
             period_label_plural=rules.period_label_plural,
             term_label_plural=rules.term_label_plural,

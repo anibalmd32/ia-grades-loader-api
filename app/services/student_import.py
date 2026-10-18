@@ -21,9 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AppError
 from app.core.security import generate_password, hash_password
-from app.models import Enrollment, Nationality, Role, Subject, User
+from app.models import Enrollment, Role, Subject, User
 from app.services import excel
+from app.services import rules as rules_service
 from app.services.grade_import import parse_cedula
+from app.services.rules import GradingRules
 
 Status = Literal["new", "existing", "error"]
 
@@ -48,6 +50,10 @@ HEADERS: dict[str, set[str]] = {
         "cedula de identidad",
         "numero de cedula",
         "n de cedula",
+        "dni",
+        "pasaporte",
+        "numero de documento",
+        "documento de identidad",
     },
     "subjects": {"materias", "materia", "codigos", "codigo", "materias codigos"},
 }
@@ -110,7 +116,7 @@ def _split_full_name(text: str) -> tuple[str, str]:
     return " ".join(words[:half]), " ".join(words[half:])
 
 
-def parse(content: bytes) -> list[StudentRow]:
+def parse(content: bytes, rules: GradingRules) -> list[StudentRow]:
     sheets = excel.read_workbook(content)
     sheet = sheets[0]
     header_index, columns = _find_columns(sheet)
@@ -133,12 +139,12 @@ def parse(content: bytes) -> list[StudentRow]:
             row.error(f"Cédula inválida «{raw_cedula}»" if raw_cedula else "Falta la cédula")
         else:
             letter, row.cedula = parsed
-            raw_type = cell(cells, "nationality").upper()[:1] or letter or "V"
+            raw_type = cell(cells, "nationality").upper() or letter or rules.document_codes[0]
             row.nationality = raw_type
             if letter and raw_type != letter:
                 row.error(f"El tipo «{raw_type}» no coincide con la cédula «{raw_cedula}»")
-            elif raw_type not in {n.value for n in Nationality}:
-                row.error(f"Tipo de cédula inválido «{raw_type}» (usa V o E)")
+            elif problem := rules.document_type_error(raw_type):
+                row.error(problem)
 
         if not row.first_name:
             row.error("Falta el nombre")
@@ -167,13 +173,9 @@ async def _validate(db: AsyncSession, rows: list[StudentRow]) -> dict[str, Subje
             seen[key] = row.row
 
     existing = {
-        (u.nationality.value, u.cedula): u
+        (u.nationality, u.cedula): u
         for u in await db.scalars(
-            select(User).where(
-                tuple_(User.nationality, User.cedula).in_(
-                    [(Nationality(n), c) for n, c in seen if n in {x.value for x in Nationality}]
-                )
-            )
+            select(User).where(tuple_(User.nationality, User.cedula).in_(list(seen)))
         )
     }
     codes = {code for row in rows for code in row.subject_codes}
@@ -197,7 +199,7 @@ async def _validate(db: AsyncSession, rows: list[StudentRow]) -> dict[str, Subje
 
 
 async def import_students(db: AsyncSession, content: bytes, *, dry_run: bool) -> list[StudentRow]:
-    rows = await asyncio.to_thread(parse, content)
+    rows = await asyncio.to_thread(parse, content, await rules_service.get_rules(db))
     subjects = await _validate(db, rows)
     if dry_run:
         return rows
@@ -210,7 +212,7 @@ async def import_students(db: AsyncSession, content: bytes, *, dry_run: bool) ->
             role=Role.STUDENT,
             first_name=row.first_name,
             last_name=row.last_name,
-            nationality=Nationality(row.nationality),
+            nationality=row.nationality,
             cedula=row.cedula,
             password_hash=hash_password(row.generated_password),
             must_change_password=True,

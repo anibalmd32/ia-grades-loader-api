@@ -19,6 +19,9 @@ STAFF_ROLES = frozenset({Role.SUPER_ADMIN, Role.COORDINATOR, Role.TEACHER})
 
 
 class Nationality(StrEnum):
+    """Tipos de documento por defecto. Los válidos los configura el super admin
+    (AcademicSettings.document_types); en la base se guarda el código como texto."""
+
     VENEZOLANO = "V"
     EXTRANJERO = "E"
 
@@ -45,10 +48,9 @@ class User(TimestampMixin, Base):
     last_name: Mapped[str] = mapped_column(String(100))
     # Credencial del personal (super admin, coordinador, profesor). Se guarda en minúsculas.
     email: Mapped[str | None] = mapped_column(String(255), unique=True)
-    # Credencial de los estudiantes: tipo (V/E) + número de cédula sin puntos ni letras
-    nationality: Mapped[Nationality | None] = mapped_column(
-        Enum(Nationality, name="nationality", values_callable=_enum_values)
-    )
+    # Credencial de los estudiantes: tipo de documento (código configurable, p. ej. V/E) +
+    # número sin puntos ni letras
+    nationality: Mapped[str | None] = mapped_column(String(3))
     cedula: Mapped[int | None] = mapped_column(Integer)
     password_hash: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
@@ -80,4 +82,4 @@ class User(TimestampMixin, Base):
     def cedula_display(self) -> str | None:
         if self.cedula is None or self.nationality is None:
             return None
-        return f"{self.nationality.value}-{self.cedula}"
+        return f"{self.nationality}-{self.cedula}"

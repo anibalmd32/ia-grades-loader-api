@@ -27,7 +27,7 @@ from app.services.rules import GradingRules
 
 Status = Literal["ok", "warning", "error"]
 
-_CEDULA_RE = re.compile(r"^\s*([VE])?[\s\-.]*([\d.\s]+)\s*$", re.IGNORECASE)
+_CEDULA_RE = re.compile(r"^\s*([A-Z]{1,3})?[\s\-.]*([\d.\s]+)\s*$", re.IGNORECASE)
 
 
 # --- Respuesta esperada del modelo -------------------------------------------
@@ -156,13 +156,14 @@ class _Roster:
             candidates = [
                 s
                 for s in self.by_number.get(number, [])
-                if letter is None or s.nationality.value == letter
+                if letter is None or s.nationality == letter
             ]
             if len(candidates) == 1:
                 row.student = candidates[0]
                 return
             if len(candidates) > 1:
-                row.flag("error", f"La cédula {number} es ambigua: indica si es V o E")
+                types = " o ".join(sorted({s.nationality for s in candidates}))
+                row.flag("error", f"La cédula {number} es ambigua: indica si es {types}")
                 return
             row.flag("error", f"La cédula {row.extracted.cedula} no está matriculada en la materia")
             return

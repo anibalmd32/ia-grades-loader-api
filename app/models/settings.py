@@ -42,3 +42,7 @@ class AcademicSettings(TimestampMixin, Base):
     grade_decimals: Mapped[int] = mapped_column(SmallInteger)
     # True: la definitiva se redondea al entero (9.5 -> 10) antes de decidir si aprueba
     round_final_grade: Mapped[bool] = mapped_column(Boolean)
+    # Documento de identidad de los estudiantes: cómo se llama y qué tipos hay
+    document_label: Mapped[str] = mapped_column(String(30), default="Cédula")
+    # [{"code": "V", "name": "Venezolano"}, ...]
+    document_types: Mapped[list[dict[str, str]]] = mapped_column(JSON)

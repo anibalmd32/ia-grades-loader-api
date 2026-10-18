@@ -5,9 +5,10 @@ from typing import Any
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import ConflictError, NotFoundError
+from app.core.errors import ConflictError, InvalidDataError, NotFoundError
 from app.core.security import generate_password, hash_password
-from app.models import Enrollment, Nationality, Role, TeacherSubject, User
+from app.models import Enrollment, Role, TeacherSubject, User
+from app.services import rules
 
 ROLE_NAMES = {
     Role.COORDINATOR: "Coordinador",
@@ -46,11 +47,11 @@ async def _ensure_unique(db: AsyncSession, fields: dict[str, Any], exclude_id: i
             (User.email == fields["email"], f"Ya existe un usuario con el email {fields['email']}")
         )
     if fields.get("nationality") and fields.get("cedula"):
-        nationality = Nationality(fields["nationality"])
+        nationality = fields["nationality"]
         checks.append(
             (
                 (User.nationality == nationality) & (User.cedula == fields["cedula"]),
-                f"Ya existe un usuario con la cédula {nationality.value}-{fields['cedula']}",
+                f"Ya existe un usuario con la cédula {nationality}-{fields['cedula']}",
             )
         )
     for condition, message in checks:
@@ -59,6 +60,13 @@ async def _ensure_unique(db: AsyncSession, fields: dict[str, Any], exclude_id: i
             query = query.where(User.id != exclude_id)
         if await db.scalar(query) is not None:
             raise ConflictError(message)
+
+
+async def _check_document_type(db: AsyncSession, fields: dict[str, Any]) -> None:
+    if fields.get("nationality"):
+        problem = (await rules.get_rules(db)).document_type_error(fields["nationality"])
+        if problem:
+            raise InvalidDataError(problem)
 
 
 async def list_users(
@@ -87,6 +95,7 @@ async def list_users(
 
 async def create_user(db: AsyncSession, role: Role, fields: dict[str, Any]) -> tuple[User, str]:
     """Crea la cuenta con una contraseña generada que el usuario deberá cambiar."""
+    await _check_document_type(db, fields)
     await _ensure_unique(db, fields)
     password = generate_password()
     user = User(
@@ -102,6 +111,7 @@ async def create_user(db: AsyncSession, role: Role, fields: dict[str, Any]) -> t
 
 async def update_user(db: AsyncSession, role: Role, user_id: int, changes: dict[str, Any]) -> User:
     user = await get_user(db, role, user_id)
+    await _check_document_type(db, changes)
     if "email" in changes:
         await _ensure_unique(db, {"email": changes["email"]}, exclude_id=user_id)
     if changes.keys() & {"nationality", "cedula"}:

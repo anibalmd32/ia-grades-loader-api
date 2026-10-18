@@ -103,6 +103,8 @@ NEW_RULES = {
     "passing_grade": 60,
     "grade_decimals": 0,
     "round_final_grade": False,
+    "document_label": "Cédula",
+    "document_types": [{"code": "V", "name": "Venezolano"}, {"code": "E", "name": "Extranjero"}],
 }
 
 

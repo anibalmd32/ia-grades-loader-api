@@ -19,6 +19,8 @@ DEFAULTS = {
     "passing_grade": 10,
     "grade_decimals": 2,
     "round_final_grade": False,
+    "document_label": "Cédula",
+    "document_types": [{"code": "V", "name": "Venezolano"}, {"code": "E", "name": "Extranjero"}],
 }
 
 
@@ -317,3 +319,53 @@ async def test_el_chat_envia_el_prompt_con_la_configuracion(client, admin, campu
     assert "UNEFA" in system
     assert "se aprueba con 12" in system
     assert system.rstrip().endswith("sin ningún detalle\ntécnico.")
+
+
+# --- Tipos de documento -----------------------------------------------------------
+
+
+async def test_tipos_de_documento_configurables(client, admin, login_as):
+    coord = await login_as(Role.COORDINATOR, email="coord@uni.edu")
+    types = [
+        {"code": "v", "name": "Venezolano"},
+        {"code": "E", "name": "Extranjero"},
+        {"code": "P", "name": "Pasaporte"},
+    ]
+    response = await put_settings(client, admin, document_label="Documento", document_types=types)
+    assert response.status_code == 200, response.text
+    assert [t["code"] for t in response.json()["document_types"]] == ["V", "E", "P"]
+
+    created = await client.post(
+        "/students",
+        json={"first_name": "John", "last_name": "Doe", "nationality": "p", "cedula": 555},
+        headers=coord,
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["user"]["cedula_display"] == "P-555"
+    password = created.json()["generated_password"]
+    login = await client.post(
+        "/auth/login/student", json={"nationality": "P", "cedula": 555, "password": password}
+    )
+    assert login.status_code == 200
+    swagger = await client.post("/auth/token", data={"username": "P-555", "password": password})
+    assert swagger.status_code == 200
+
+    # Un tipo no configurado se rechaza
+    bad = await client.post(
+        "/students",
+        json={"first_name": "X", "last_name": "Y", "nationality": "Z", "cedula": 1},
+        headers=coord,
+    )
+    assert bad.status_code == 422
+    assert "usa V o E o P" in bad.json()["detail"]
+
+    # No se puede quitar un tipo que tienen estudiantes
+    removed = await put_settings(client, admin, document_types=types[:2])
+    assert removed.status_code == 409
+    assert "tipo P" in removed.json()["detail"]
+
+
+async def test_codigos_de_documento_repetidos(client, admin):
+    types = [{"code": "V", "name": "Uno"}, {"code": "v", "name": "Dos"}]
+    response = await put_settings(client, admin, document_types=types)
+    assert response.status_code == 422

@@ -13,7 +13,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
-from app.models import AcademicSettings, Enrollment, Grade, PeriodType, Semester, Subject
+from app.models import AcademicSettings, Enrollment, Grade, PeriodType, Semester, Subject, User
 from app.models.settings import SETTINGS_ID
 
 # Límites de lo configurable (también los usa la validación de entrada)
@@ -48,6 +48,21 @@ class GradingRules:
     passing_grade: Decimal = Decimal(10)
     grade_decimals: int = 2
     round_final_grade: bool = False
+    document_label: str = "Cédula"
+    # (código, nombre) de cada tipo de documento
+    document_types: tuple[tuple[str, str], ...] = (("V", "Venezolano"), ("E", "Extranjero"))
+
+    @property
+    def document_codes(self) -> list[str]:
+        return [code for code, _ in self.document_types]
+
+    def document_type_error(self, code: str) -> str | None:
+        if code in self.document_codes:
+            return None
+        return (
+            f"Tipo de {self.document_label.lower()} «{code}» no válido "
+            f"(usa {' o '.join(self.document_codes)})"
+        )
 
     # --- Textos ---------------------------------------------------------------
 
@@ -236,6 +251,8 @@ def _from_row(row: AcademicSettings) -> GradingRules:
         passing_grade=Decimal(row.passing_grade),
         grade_decimals=row.grade_decimals,
         round_final_grade=row.round_final_grade,
+        document_label=row.document_label,
+        document_types=tuple((t["code"], t["name"]) for t in row.document_types),
     )
 
 
@@ -290,8 +307,23 @@ async def _check_existing_grades(db: AsyncSession, new: GradingRules) -> None:
             )
 
 
+async def _check_document_types(db: AsyncSession, new: GradingRules) -> None:
+    """No se puede quitar un tipo de documento que tienen estudiantes."""
+    in_use = await db.scalars(
+        select(User.nationality)
+        .where(User.nationality.is_not(None), User.nationality.not_in(new.document_codes))
+        .distinct()
+    )
+    if removed := sorted(in_use):
+        raise ConflictError(
+            f"Hay estudiantes con {new.document_label.lower()} de tipo "
+            f"{', '.join(removed)}: no se puede quitar ese tipo"
+        )
+
+
 async def update_rules(db: AsyncSession, new: GradingRules) -> GradingRules:
     await _check_existing_grades(db, new)
+    await _check_document_types(db, new)
     row = await db.get(AcademicSettings, SETTINGS_ID)
     if row is None:
         row = AcademicSettings(id=SETTINGS_ID)
@@ -306,5 +338,7 @@ async def update_rules(db: AsyncSession, new: GradingRules) -> GradingRules:
     row.passing_grade = new.passing_grade
     row.grade_decimals = new.grade_decimals
     row.round_final_grade = new.round_final_grade
+    row.document_label = new.document_label
+    row.document_types = [{"code": c, "name": n} for c, n in new.document_types]
     await db.commit()
     return _from_row(row)

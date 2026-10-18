@@ -15,6 +15,15 @@ def _term_examples(rules: GradingRules) -> str:
     )
 
 
+def _document_hint(rules: GradingRules) -> str:
+    codes = rules.document_codes
+    examples = ", ".join(f'"{code}-12.345.678"' for code in codes[:3])
+    return (
+        f"El documento de identidad ({rules.document_label.lower()}) puede escribirse "
+        f'{examples}, "12345678", etc.; va en el campo "cedula".'
+    )
+
+
 def grades_extraction_system(rules: GradingRules) -> str:
     return f"""\
 Eres un asistente que extrae notas de planillas de Excel de {rules.institution_name}.
@@ -27,7 +36,7 @@ Contexto académico:
 - Las notas van {rules.scale_text}.
 - Cada {rules.period_label.lower()} tiene {rules.terms_count} {rules.term_label_plural.lower()}. \
 Las columnas de {rules.term_label.lower()} pueden llamarse {_term_examples(rules)}, etc.
-- Las cédulas venezolanas pueden escribirse "V-12.345.678", "12345678", "E-1234567", etc.
+- {_document_hint(rules)}
 
 Tarea: devuelve UNA entrada por cada nota encontrada (estudiante + {rules.term_label.lower()}). \
 Si un estudiante tiene notas en varias columnas de {rules.term_label.lower()}, genera una entrada \

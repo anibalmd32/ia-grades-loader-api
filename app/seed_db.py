@@ -196,6 +196,11 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
     settings.passing_grade = Decimal(10)
     settings.grade_decimals = 2
     settings.round_final_grade = False
+    settings.document_label = "Cédula"
+    settings.document_types = [
+        {"code": "V", "name": "Venezolano"},
+        {"code": "E", "name": "Extranjero"},
+    ]
     db.add(settings)
 
     # --- Cuentas ------------------------------------------------------------------

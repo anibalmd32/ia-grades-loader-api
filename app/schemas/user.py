@@ -2,8 +2,8 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
-from app.models import Nationality, Role
-from app.schemas.common import CedulaNumber, Email
+from app.models import Role
+from app.schemas.common import CedulaNumber, DocumentCode, Email
 
 FirstName = Annotated[
     str,
@@ -26,7 +26,7 @@ class UserRead(BaseModel):
     last_name: str
     full_name: str = Field(description="Nombre y apellido")
     email: str | None
-    nationality: Nationality | None
+    nationality: str | None = Field(description="Tipo de documento (V, E...)")
     cedula: int | None
     cedula_display: str | None = Field(description="Cédula con formato, p. ej. V-12345678")
     is_active: bool
@@ -58,14 +58,14 @@ class StaffUpdate(BaseModel):
 class StudentCreate(BaseModel):
     first_name: FirstName
     last_name: LastName
-    nationality: Nationality = Field(description="V = venezolano, E = extranjero")
+    nationality: DocumentCode
     cedula: CedulaNumber
 
 
 class StudentUpdate(BaseModel):
     first_name: FirstName | None = None
     last_name: LastName | None = None
-    nationality: Nationality | None = None
+    nationality: DocumentCode | None = None
     cedula: CedulaNumber | None = None
     is_active: bool | None = None
 
