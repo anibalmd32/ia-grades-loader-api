@@ -21,6 +21,11 @@ class AppError(Exception):
         super().__init__(detail)
         self.detail = detail
 
+    @property
+    def headers(self) -> dict[str, str] | None:
+        """Cabeceras extra de la respuesta (p. ej. Retry-After en los 429)."""
+        return None
+
 
 class NotFoundError(AppError):
     status_code = status.HTTP_404_NOT_FOUND
@@ -31,7 +36,9 @@ class ConflictError(AppError):
 
 
 async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return JSONResponse(
+        status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers
+    )
 
 
 async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:

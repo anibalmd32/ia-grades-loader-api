@@ -331,7 +331,7 @@ async def test_streaming_informa_errores_y_guarda_lo_recibido(client, campus, sc
     headers = campus["students"]["Ana"]["headers"]
     response = await client.post("/student/chat/stream", json={"message": "?"}, headers=headers)
     events = parse_sse(response.text)
-    assert events[-1] == ("error", {"detail": "La IA se cayó"})
+    assert events[-1] == ("error", {"detail": "La IA se cayó", "retry_after": None})
 
     url = f"/student/conversations/{events[0][1]['id']}"
     detail = (await client.get(url, headers=headers)).json()

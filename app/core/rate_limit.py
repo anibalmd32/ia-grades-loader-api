@@ -22,6 +22,10 @@ class RateLimitedError(AppError):
         )
         self.retry_after = retry_after
 
+    @property
+    def headers(self) -> dict[str, str]:
+        return {"Retry-After": str(self.retry_after)}
+
 
 class RateLimiter:
     def __init__(

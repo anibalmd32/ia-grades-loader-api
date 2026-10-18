@@ -8,6 +8,7 @@ from app.main import app as fastapi_app
 from app.models import ChatChannel, User
 from app.services import conversations
 from app.telegram.handlers import TelegramBotService
+from tests.test_chat import parse_sse
 
 
 class Clock:
@@ -60,6 +61,7 @@ async def test_chat_responde_429_al_superar_el_limite(client, campus, limited):
     blocked = await client.post("/student/chat", json={"message": "?"}, headers=headers)
     assert blocked.status_code == 429
     assert "Espera" in blocked.json()["detail"]
+    assert 1 <= int(blocked.headers["Retry-After"]) <= 60
 
     # Otro estudiante no se ve afectado
     beto = campus["students"]["Beto"]["headers"]
@@ -83,3 +85,30 @@ async def test_el_limite_se_comparte_con_telegram(
     bot = TelegramBotService(sessionmaker, FakeLLM)
     assert await bot.message(777, "?") == "ok"
     assert "Espera" in await bot.message(777, "?")  # 3.ª pregunta del minuto
+
+
+async def test_stream_informa_retry_after_en_el_evento_error(client, campus, limited):
+    headers = campus["students"]["Ana"]["headers"]
+    for _ in range(2):
+        await client.post("/student/chat", json={"message": "?"}, headers=headers)
+    response = await client.post("/student/chat/stream", json={"message": "?"}, headers=headers)
+    assert response.status_code == 200
+    event, data = parse_sse(response.text)[-1]
+    assert event == "error"
+    assert "Espera" in data["detail"]
+    assert isinstance(data["retry_after"], int)
+    assert 1 <= data["retry_after"] <= 60
+
+
+async def test_cors_expone_retry_after_y_request_id(client):
+    origin = get_settings().cors_origins_list[0]
+    response = await client.get("/health", headers={"Origin": origin})
+    exposed = response.headers["access-control-expose-headers"].lower()
+    assert "retry-after" in exposed
+    assert "x-request-id" in exposed
+
+
+def test_openapi_documenta_el_429_del_chat():
+    paths = fastapi_app.openapi()["paths"]
+    response = paths["/api/v1/student/chat"]["post"]["responses"]["429"]
+    assert "Retry-After" in response["headers"]

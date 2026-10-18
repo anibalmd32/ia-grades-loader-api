@@ -111,8 +111,9 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
-        # Para que el front pueda leer el id de la petición y mostrarlo en los errores
-        expose_headers=[REQUEST_ID_HEADER],
+        # Para que el front pueda leer el id de la petición y mostrarlo en los errores, y
+        # cuántos segundos esperar cuando se supera un límite (429)
+        expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
     )
     app.add_middleware(RequestIdMiddleware)
 

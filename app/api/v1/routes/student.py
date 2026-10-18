@@ -10,6 +10,7 @@ from app.ai.client import LLMClient, get_llm
 from app.api.deps import DbSession, require_roles
 from app.core.config import get_settings
 from app.core.errors import AppError
+from app.core.rate_limit import RateLimitedError
 from app.models import ChatChannel, Conversation, Role, User
 from app.schemas.academic import SubjectRead
 from app.schemas.chat import (
@@ -72,7 +73,24 @@ async def _conversation_for(db, student: User, conversation_id: int | None) -> C
     return await conversations.get(db, student.id, conversation_id)
 
 
-@router.post("/chat", summary="Preguntar por mis notas (respuesta completa)")
+RATE_LIMITED_RESPONSE = {
+    429: {
+        "description": "Se superó el límite de preguntas por minuto",
+        "headers": {
+            "Retry-After": {
+                "description": "Segundos que hay que esperar antes de volver a preguntar",
+                "schema": {"type": "integer"},
+            }
+        },
+    }
+}
+
+
+@router.post(
+    "/chat",
+    summary="Preguntar por mis notas (respuesta completa)",
+    responses=RATE_LIMITED_RESPONSE,
+)
 async def ask_about_my_grades(
     data: ChatRequest, student: Student, db: DbSession, llm: Llm
 ) -> ChatResponse:
@@ -100,7 +118,9 @@ async def ask_about_my_grades_stream(
     - `conversation`: `{"id", "title"}` (guárdalo para continuar la conversación)
     - `delta`: `{"text"}` fragmento de la respuesta; concaténalos según llegan
     - `done`: `{}` la respuesta terminó (ya está guardada)
-    - `error`: `{"detail"}` si algo falla (p. ej. la IA no responde)
+    - `error`: `{"detail", "retry_after"}` si algo falla (p. ej. la IA no responde).
+      `retry_after` son los segundos que hay que esperar cuando se superó el límite de
+      preguntas por minuto; en cualquier otro error es `null`.
     """
     conversation = await _conversation_for(db, student, data.conversation_id)
     yield ServerSentEvent(
@@ -111,7 +131,10 @@ async def ask_about_my_grades_stream(
         async for text in chat.ask_stream(db, llm, student, conversation, data.message):
             yield ServerSentEvent(event="delta", data={"text": text})
     except AppError as exc:
-        yield ServerSentEvent(event="error", data={"detail": exc.detail})
+        retry_after = exc.retry_after if isinstance(exc, RateLimitedError) else None
+        yield ServerSentEvent(
+            event="error", data={"detail": exc.detail, "retry_after": retry_after}
+        )
         return
     yield ServerSentEvent(event="done", data={})
 
