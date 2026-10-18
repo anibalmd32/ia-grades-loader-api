@@ -14,9 +14,9 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
-from app.models.enrollment import MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
+from app.services import rules as rules_service
 from app.services import student_grades
+from app.services.rules import GradingRules, fmt
 from app.services.student_grades import Standing, SubjectGrades
 
 
@@ -24,44 +24,52 @@ def _number(value: Decimal | None) -> float | None:
     return None if value is None else float(value)
 
 
-_STANDING_TEXT = {
-    Standing.PASSED: "aprobada (todos los lapsos cargados)",
-    Standing.FAILED: "reprobada (todos los lapsos cargados)",
-    Standing.SECURED: "aprobada asegurada: aprueba aunque saque la nota mínima en lo que falta",
-    Standing.IN_PROGRESS: "en curso: depende de los lapsos pendientes",
-    Standing.IMPOSSIBLE: "ya no puede aprobar: ni con 20 en lo que falta llega a la aprobatoria",
-}
+def _standing_text(standing: Standing, rules: GradingRules) -> str:
+    terms = rules.term_label_plural.lower()
+    return {
+        Standing.PASSED: f"aprobada (todos los {terms} tienen nota)",
+        Standing.FAILED: f"reprobada (todos los {terms} tienen nota)",
+        Standing.SECURED: "aprobada asegurada: aprueba aunque saque la nota mínima en lo que falta",
+        Standing.IN_PROGRESS: f"en curso: depende de los {terms} que faltan",
+        Standing.IMPOSSIBLE: f"ya no puede aprobar: ni con {fmt(rules.max_grade)} en lo que "
+        "falta llega a la nota aprobatoria",
+    }[standing]
 
 
 def _situation(item: SubjectGrades) -> dict[str, Any]:
     p = item.projection
+    term = item.rules.term_label.lower()
     return {
-        "estado": _STANDING_TEXT[p.standing],
+        "estado": _standing_text(p.standing, item.rules),
         "definitiva": _number(p.final_grade),
-        "lapsos_pendientes": p.pending_terms,
-        "nota_minima_necesaria_en_cada_lapso_pendiente": _number(p.needed_average),
+        f"{item.rules.term_label_plural.lower()}_sin_nota": p.pending_terms,
+        f"nota_minima_necesaria_en_cada_{term}_sin_nota": _number(p.needed_average),
     }
 
 
 def _subject_dict(item: SubjectGrades) -> dict[str, Any]:
+    rules = item.rules
     return {
         "codigo": item.subject.code,
         "materia": item.subject.name,
-        "semestre": item.subject.semester.name,
+        rules.period_label.lower(): item.subject.semester.name,
         "profesores": item.teachers,
-        "notas_por_lapso": {f"lapso_{term}": _number(value) for term, value in item.grades.items()},
-        "promedio": _number(item.average),
+        "notas": {rules.term_name(term): _number(value) for term, value in item.grades.items()},
+        "promedio_actual": _number(item.average),
         # Calculada por el servidor: el modelo debe usar este dato, no hacer la cuenta
         "situacion": _situation(item),
     }
 
 
-def _scale() -> dict[str, Any]:
+def _scale(rules: GradingRules) -> dict[str, Any]:
     return {
-        "nota_minima": MIN_GRADE,
-        "nota_maxima": MAX_GRADE,
-        "nota_aprobatoria": float(get_settings().passing_grade),
-        "lapsos_por_semestre": TERMS_PER_SEMESTER,
+        "institucion": rules.institution_name,
+        "nota_minima": _number(rules.min_grade),
+        "nota_maxima": _number(rules.max_grade),
+        "nota_aprobatoria": _number(rules.passing_grade),
+        f"{rules.term_label_plural.lower()}_por_{rules.period_label.lower()}": rules.terms_count,
+        "pesos": rules.weights_text,
+        "regla_de_la_definitiva": rules.final_grade_text,
     }
 
 
@@ -85,16 +93,18 @@ class SubjectArgs(BaseModel):
 
 
 async def resumen_de_notas(db: AsyncSession, student_id: int, _: NoArgs) -> dict[str, Any]:
-    subjects = await student_grades.student_subjects(db, student_id)
+    rules = await rules_service.get_rules(db)
+    subjects = await student_grades.student_subjects(db, student_id, rules)
     return {
-        "escala": _scale(),
+        "escala": _scale(rules),
         "materias": [_subject_dict(s) for s in subjects],
         "promedio_general": _number(student_grades.overall_average(subjects)),
     }
 
 
 async def notas_de_materia(db: AsyncSession, student_id: int, args: SubjectArgs) -> dict[str, Any]:
-    subjects = await student_grades.student_subjects(db, student_id)
+    rules = await rules_service.get_rules(db)
+    subjects = await student_grades.student_subjects(db, student_id, rules)
     query = _normalize(args.materia)
     matches = [
         s
@@ -104,11 +114,11 @@ async def notas_de_materia(db: AsyncSession, student_id: int, args: SubjectArgs)
         or query in _normalize(s.subject.code)
     ]
     if len(matches) == 1:
-        return {"escala": _scale(), **_subject_dict(matches[0])}
+        return {"escala": _scale(rules), **_subject_dict(matches[0])}
     return {
-        "error": "No se encontró una única materia con ese nombre"
+        "aviso": "No cursa ninguna materia con ese nombre; muéstrale las que cursa"
         if not matches
-        else "Hay varias materias que coinciden; pide al estudiante que precise",
+        else "Varias materias coinciden; pregúntale a cuál se refiere",
         "materias_del_estudiante": [
             {"codigo": s.subject.code, "materia": s.subject.name} for s in (matches or subjects)
         ],
@@ -144,16 +154,16 @@ TOOLS: dict[str, StudentTool] = {
         StudentTool(
             name="resumen_de_notas",
             description="Devuelve todas las materias del estudiante con su nota de cada "
-            "lapso (null si aún no se ha cargado), el promedio de cada materia, su situación "
-            "(aprobada, reprobada, en curso, asegurada o imposible y la nota mínima necesaria "
-            "en los lapsos pendientes), el promedio general y la escala de notas.",
+            "lapso (null si aún no se ha cargado), el promedio actual de cada materia, su "
+            "situación (aprobada, reprobada, en curso, asegurada o imposible y la nota mínima "
+            "necesaria en los lapsos sin nota), el promedio general y las reglas de evaluación.",
             args=NoArgs,
             handler=resumen_de_notas,
         ),
         StudentTool(
             name="notas_de_materia",
-            description="Devuelve las notas por lapso, el promedio y los profesores de una "
-            "materia concreta del estudiante, buscándola por nombre o código.",
+            description="Devuelve las notas por lapso, el promedio actual, la situación y los "
+            "profesores de una materia concreta del estudiante, buscándola por nombre o código.",
             args=SubjectArgs,
             handler=notas_de_materia,
         ),

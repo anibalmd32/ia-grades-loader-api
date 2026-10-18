@@ -7,17 +7,15 @@ elegido por el usuario o por la IA.
 
 from collections import defaultdict
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, Decimal
+from decimal import Decimal
 from enum import StrEnum
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.errors import NotFoundError
 from app.models import Enrollment, Grade, Semester, Subject, TeacherSubject, User
-from app.models.enrollment import GRADE_DECIMALS, MAX_GRADE, MIN_GRADE
-from app.services.grades import TERMS, average
+from app.services.rules import GradingRules
 
 
 class Standing(StrEnum):
@@ -37,26 +35,19 @@ class Projection:
     needed_average: Decimal | None
 
 
-def project(grades: dict[int, Decimal | None]) -> Projection:
-    """Definitiva = promedio simple de los lapsos (pesan igual); se aprueba con
-    PASSING_GRADE. Calculado por el servidor para que el número sea siempre exacto."""
-    passing = Decimal(str(get_settings().passing_grade))
-    pending = [term for term, value in grades.items() if value is None]
-    loaded_sum = sum((v for v in grades.values() if v is not None), Decimal(0))
-
+def project(grades: dict[int, Decimal | None], rules: GradingRules) -> Projection:
+    """Situación de la materia según la configuración académica (pesos, escala, nota
+    aprobatoria y redondeo). Calculada por el servidor para que el número sea exacto."""
+    pending = [term for term in rules.terms if grades.get(term) is None]
     if not pending:
-        final = average(list(grades.values()))
-        standing = Standing.PASSED if final >= passing else Standing.FAILED
+        final = rules.final_grade(grades)
+        standing = Standing.PASSED if rules.passes(final) else Standing.FAILED
         return Projection(standing, final, [], None)
 
-    # Lo que deben sumar los lapsos pendientes, repartido entre ellos y redondeado hacia
-    # arriba: sacar exactamente esa nota garantiza aprobar
-    needed = ((passing * len(grades) - loaded_sum) / len(pending)).quantize(
-        Decimal(1).scaleb(-GRADE_DECIMALS), rounding=ROUND_CEILING
-    )
-    if needed <= MIN_GRADE:
+    needed = rules.needed_in_pending(grades)
+    if needed <= rules.min_grade:
         return Projection(Standing.SECURED, None, pending, None)
-    if needed > MAX_GRADE:
+    if needed > rules.max_grade:
         return Projection(Standing.IMPOSSIBLE, None, pending, None)
     return Projection(Standing.IN_PROGRESS, None, pending, needed)
 
@@ -66,18 +57,19 @@ class SubjectGrades:
     subject: Subject
     teachers: list[str]
     grades: dict[int, Decimal | None]  # lapso -> nota
+    rules: GradingRules
 
     @property
     def average(self) -> Decimal | None:
-        return average(list(self.grades.values()))
+        return self.rules.average(self.grades)
 
     @property
     def projection(self) -> Projection:
-        return project(self.grades)
+        return project(self.grades, self.rules)
 
 
 async def student_subjects(
-    db: AsyncSession, student_id: int, subject_id: int | None = None
+    db: AsyncSession, student_id: int, rules: GradingRules, subject_id: int | None = None
 ) -> list[SubjectGrades]:
     """Materias en las que está matriculado el estudiante, con sus notas por lapso."""
     query = (
@@ -107,7 +99,7 @@ async def student_subjects(
         select(TeacherSubject.subject_id, User.full_name)
         .join(User, User.id == TeacherSubject.teacher_id)
         .where(TeacherSubject.subject_id.in_([s.id for _, s in enrollments]))
-        .order_by(User.full_name)
+        .order_by(User.last_name, User.first_name)
     )
     for sid, name in rows:
         teachers[sid].append(name)
@@ -116,14 +108,17 @@ async def student_subjects(
         SubjectGrades(
             subject=subject,
             teachers=teachers[subject.id],
-            grades={t: grades[enrollment_id].get(t) for t in TERMS},
+            grades={t: grades[enrollment_id].get(t) for t in rules.terms},
+            rules=rules,
         )
         for enrollment_id, subject in enrollments
     ]
 
 
-async def student_subject(db: AsyncSession, student_id: int, subject_id: int) -> SubjectGrades:
-    found = await student_subjects(db, student_id, subject_id)
+async def student_subject(
+    db: AsyncSession, student_id: int, subject_id: int, rules: GradingRules
+) -> SubjectGrades:
+    found = await student_subjects(db, student_id, rules, subject_id)
     if not found:
         raise NotFoundError("No estás matriculado en esa materia")
     return found[0]
@@ -131,7 +126,10 @@ async def student_subject(db: AsyncSession, student_id: int, subject_id: int) ->
 
 def overall_average(subjects: list[SubjectGrades]) -> Decimal | None:
     """Promedio de los promedios de las materias que ya tienen alguna nota."""
-    return average([s.average for s in subjects])
+    averages = [s.average for s in subjects if s.average is not None]
+    if not averages:
+        return None
+    return subjects[0].rules.quantize(sum(averages, Decimal(0)) / len(averages))
 
 
 @dataclass

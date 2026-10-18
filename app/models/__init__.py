@@ -6,10 +6,12 @@ from app.models.enrollment import Enrollment, Grade
 from app.models.import_job import ImportJob, JobStatus
 from app.models.installation import Installation
 from app.models.revoked_token import RevokedToken
+from app.models.settings import AcademicSettings, PeriodType
 from app.models.telegram_link import TelegramLinkCode
 from app.models.user import STAFF_ROLES, Nationality, Role, User
 
 __all__ = [
+    "AcademicSettings",
     "STAFF_ROLES",
     "ChatChannel",
     "Conversation",
@@ -21,6 +23,7 @@ __all__ = [
     "JobStatus",
     "MessageRole",
     "Nationality",
+    "PeriodType",
     "RevokedToken",
     "Role",
     "Semester",

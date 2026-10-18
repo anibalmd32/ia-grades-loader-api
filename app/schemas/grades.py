@@ -3,22 +3,26 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, model_validator
 
-from app.models.enrollment import GRADE_DECIMALS, MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
 from app.schemas.academic import SemesterRead, SubjectRead
+from app.services.rules import MAX_DECIMALS, MAX_GRADE_LIMIT, MAX_TERMS
 from app.services.student_grades import Standing
 
-Term = Annotated[int, Field(ge=1, le=TERMS_PER_SEMESTER, description="Lapso (1 a 3)")]
+# Los límites exactos (número de lapsos, escala, decimales) dependen de la configuración
+# académica y los valida el servicio (422); aquí solo se acota lo imposible.
+Term = Annotated[
+    int, Field(ge=1, le=MAX_TERMS, description="Lapso (de 1 al número de lapsos configurado)")
+]
 
 # Decimal exacto internamente; en JSON viaja como número (15.75), no como texto
 _AsNumber = PlainSerializer(float, return_type=float, when_used="json")
 GradeValue = Annotated[
     Decimal,
     Field(
-        ge=MIN_GRADE,
-        le=MAX_GRADE,
-        max_digits=2 + GRADE_DECIMALS,
-        decimal_places=GRADE_DECIMALS,
-        description=f"Nota del {MIN_GRADE} al {MAX_GRADE}, hasta {GRADE_DECIMALS} decimales",
+        ge=0,
+        le=MAX_GRADE_LIMIT,
+        max_digits=3 + MAX_DECIMALS,
+        decimal_places=MAX_DECIMALS,
+        description="Nota dentro de la escala configurada (GET /settings/academic)",
         examples=[15.75],
     ),
     _AsNumber,
@@ -29,7 +33,7 @@ GradeNumber = Annotated[Decimal, _AsNumber]
 class TeacherSubject(SubjectRead):
     students_count: int
     grades_count: dict[Term, int] = Field(
-        description="Notas cargadas en cada lapso (claves 1, 2 y 3; siempre las tres)",
+        description="Notas cargadas en cada lapso (siempre todos los lapsos configurados)",
         examples=[{"1": 30, "2": 12, "3": 0}],
     )
 
@@ -38,6 +42,8 @@ class StudentSummary(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
+    first_name: str
+    last_name: str
     full_name: str
     cedula_display: str | None
 
@@ -51,8 +57,12 @@ class StudentGrades(BaseModel):
     student: StudentSummary
     grades: list[TermGrade] = Field(description="Siempre un elemento por lapso, en orden")
     average: GradeNumber | None = Field(
-        description="Promedio de las notas cargadas (2 decimales, redondeo hacia arriba en .005)"
+        description="Promedio (ponderado si los lapsos tienen pesos) de las notas cargadas"
     )
+    final_grade: GradeNumber | None = Field(
+        description="Definitiva: solo con todos los lapsos cargados (calculada por la API)"
+    )
+    passed: bool | None = Field(description="Si aprueba con la definitiva; null si faltan lapsos")
 
 
 class SubjectGrades(BaseModel):
@@ -90,7 +100,7 @@ class ImportRow(BaseModel):
     raw_value: str | None
     student: StudentSummary | None = Field(description="Estudiante identificado, si se pudo")
     term: int | None
-    value: GradeNumber | None = Field(description="Nota a guardar (1-20) si es válida")
+    value: GradeNumber | None = Field(description="Nota a guardar si es válida")
     current_value: GradeNumber | None = Field(
         description="Nota actual en el sistema (se sobrescribirá)"
     )
@@ -118,14 +128,14 @@ class ImportPreview(BaseModel):
 
 
 class SubjectProjection(BaseModel):
-    """Situación de la materia: definitiva = promedio simple de los 3 lapsos."""
+    """Situación de la materia según la configuración académica."""
 
     standing: Standing = Field(
         description="passed / failed = materia cerrada; secured = aprueba aunque saque la "
         "nota mínima en lo que falta; in_progress = aún depende de los lapsos pendientes; "
         "impossible = ni con la nota máxima llega a la aprobatoria"
     )
-    final_grade: GradeNumber | None = Field(description="Definitiva (solo con los 3 lapsos)")
+    final_grade: GradeNumber | None = Field(description="Definitiva (solo con todos los lapsos)")
     pending_terms: list[int] = Field(description="Lapsos sin nota")
     needed_average: GradeNumber | None = Field(
         description="Nota mínima (promedio) que necesita en los lapsos pendientes para aprobar"
@@ -146,8 +156,8 @@ class SemesterAverage(BaseModel):
         description="Promedio del semestre: media de los promedios de sus materias con notas"
     )
     subjects_count: int = Field(description="Materias matriculadas en el semestre")
-    passed_count: int = Field(description="Materias aprobadas (los 3 lapsos cargados)")
-    failed_count: int = Field(description="Materias reprobadas (los 3 lapsos cargados)")
+    passed_count: int = Field(description="Materias aprobadas (todos los lapsos cargados)")
+    failed_count: int = Field(description="Materias reprobadas (todos los lapsos cargados)")
 
 
 class StudentOverview(BaseModel):

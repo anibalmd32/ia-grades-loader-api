@@ -20,9 +20,9 @@ from app.models import Role
 from app.services import auth as auth_service
 
 INSTRUCTIONS = (
-    "Herramientas para que un estudiante consulte sus propias notas universitarias "
-    "(escala 1-20, 3 lapsos por semestre). Solo dan acceso a las notas del estudiante "
-    "dueño del token."
+    "Herramientas para que un estudiante consulte sus propias notas universitarias. "
+    "Cada respuesta incluye la escala de notas, los lapsos y la regla de la definitiva que "
+    "configuró la institución. Solo dan acceso a las notas del estudiante dueño del token."
 )
 
 

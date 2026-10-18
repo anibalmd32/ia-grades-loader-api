@@ -10,12 +10,12 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import LLMClient
-from app.ai.prompts import STUDENT_CHAT_SYSTEM, TELEGRAM_STYLE
+from app.ai.prompts import TELEGRAM_STYLE, student_chat_system
 from app.ai.student_tools import TOOLS
 from app.core.config import get_settings
 from app.core.rate_limit import RateLimiter
 from app.models import ChatChannel, Conversation, MessageRole, User
-from app.services import conversations
+from app.services import conversations, rules
 
 # Preguntas por minuto y estudiante, sumando app y Telegram (cada una llama a la IA)
 question_limiter = RateLimiter(lambda: get_settings().chat_rate_limit_per_minute)
@@ -30,7 +30,7 @@ async def _prepare(
         db, conversation.id, last=get_settings().chat_max_history
     )
     await conversations.add_message(db, conversation, MessageRole.USER, question)
-    system = STUDENT_CHAT_SYSTEM.format(nombre=student.full_name)
+    system = student_chat_system(student.first_name, await rules.get_rules(db))
     if conversation.channel == ChatChannel.TELEGRAM:
         system += TELEGRAM_STYLE
     messages: list[dict[str, Any]] = [

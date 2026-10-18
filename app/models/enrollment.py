@@ -1,15 +1,9 @@
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, SmallInteger, UniqueConstraint
+from sqlalchemy import ForeignKey, Numeric, SmallInteger, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
-
-TERMS_PER_SEMESTER = 3
-MIN_GRADE = 1
-MAX_GRADE = 20
-# Las notas admiten decimales (p. ej. 15.75); se guardan como DECIMAL exacto
-GRADE_DECIMALS = 2
 
 
 class Enrollment(TimestampMixin, Base):
@@ -28,19 +22,20 @@ class Enrollment(TimestampMixin, Base):
 
 
 class Grade(TimestampMixin, Base):
-    """Nota de un lapso. Una por lapso y matrícula."""
+    """Nota de un lapso. Una por lapso y matrícula.
+
+    El rango del lapso y de la nota depende de la configuración académica (la valida
+    app.services.rules), por eso no hay restricciones CHECK con números fijos.
+    """
 
     __tablename__ = "grades"
-    __table_args__ = (
-        UniqueConstraint("enrollment_id", "term"),
-        CheckConstraint(f"term BETWEEN 1 AND {TERMS_PER_SEMESTER}", name="term_range"),
-        CheckConstraint(f"value BETWEEN {MIN_GRADE} AND {MAX_GRADE}", name="value_range"),
-    )
+    __table_args__ = (UniqueConstraint("enrollment_id", "term"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     enrollment_id: Mapped[int] = mapped_column(ForeignKey("enrollments.id", ondelete="CASCADE"))
     term: Mapped[int] = mapped_column(SmallInteger)
-    value: Mapped[Decimal] = mapped_column(Numeric(4, GRADE_DECIMALS))
+    # Hasta 100 con 2 decimales (escala configurable)
+    value: Mapped[Decimal] = mapped_column(Numeric(5, 2))
     # Último usuario (profesor/coordinador) que cargó o modificó la nota
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 

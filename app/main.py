@@ -18,7 +18,9 @@ DESCRIPTION = """
 API para que los profesores carguen notas (manualmente o desde Excel con ayuda de IA)
 y los estudiantes las consulten de forma tradicional, en lenguaje natural o por Telegram.
 
-* Notas del **1 al 20**, una por **lapso** (3 lapsos por semestre).
+* Notas por **lapso**. La escala, el número de lapsos y su peso, el tipo de periodo
+  (semestre, trimestre...) y la nota aprobatoria los configura el super admin en
+  `/settings/academic`. Por defecto: del 1 al 20, 3 lapsos por semestre, se aprueba con 10.
 * No hay registro público: el primer usuario (super admin) se crea con `POST /setup`.
 
 ### Cómo autenticarse en esta página
@@ -46,6 +48,10 @@ OPENAPI_TAGS = [
         "description": (
             "Personal: email y contraseña. Estudiantes: tipo (V/E), cédula y contraseña."
         ),
+    },
+    {
+        "name": "Configuración",
+        "description": "Reglas académicas: periodos, lapsos y escala de notas (super admin).",
     },
     {"name": "Coordinadores", "description": "Cuentas de coordinación (solo super admin)."},
     {"name": "Profesores", "description": "Cuentas de profesores (coordinador)."},

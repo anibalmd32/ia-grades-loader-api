@@ -2,37 +2,23 @@
 
 from collections import defaultdict
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFoundError
+from app.core.errors import InvalidDataError, NotFoundError
 from app.models import Enrollment, Grade, Subject, TeacherSubject, User
-from app.models.enrollment import GRADE_DECIMALS, TERMS_PER_SEMESTER
-
-TERMS = range(1, TERMS_PER_SEMESTER + 1)
-_QUANTUM = Decimal(1).scaleb(-GRADE_DECIMALS)  # 0.01
-
-
-def quantize(value: Decimal) -> Decimal:
-    """Redondeo escolar (la mitad hacia arriba) a los decimales admitidos."""
-    return value.quantize(_QUANTUM, rounding=ROUND_HALF_UP)
-
-
-def average(values: list[Decimal | None]) -> Decimal | None:
-    loaded = [v for v in values if v is not None]
-    return quantize(sum(loaded, Decimal(0)) / len(loaded)) if loaded else None
+from app.services.rules import GradingRules
 
 
 @dataclass
 class StudentRow:
     student: User
     grades: dict[int, Decimal | None]  # lapso -> nota
-
-    @property
-    def average(self) -> Decimal | None:
-        return average(list(self.grades.values()))
+    average: Decimal | None  # ponderado de los lapsos cargados
+    final_grade: Decimal | None  # solo con todos los lapsos cargados
+    passed: bool | None  # None mientras falten lapsos
 
 
 async def teacher_subjects_with_counts(
@@ -53,9 +39,11 @@ async def teacher_subjects_with_counts(
     return [(subject, count) for subject, count in await db.execute(query)]
 
 
-async def grades_per_term(db: AsyncSession, subject_ids: list[int]) -> dict[int, dict[int, int]]:
-    """Notas cargadas en cada lapso de cada materia (siempre los 3 lapsos, 0 si no hay)."""
-    counts = {sid: dict.fromkeys(TERMS, 0) for sid in subject_ids}
+async def grades_per_term(
+    db: AsyncSession, subject_ids: list[int], rules: GradingRules
+) -> dict[int, dict[int, int]]:
+    """Notas cargadas en cada lapso de cada materia (siempre todos los lapsos, 0 si no hay)."""
+    counts = {sid: dict.fromkeys(rules.terms, 0) for sid in subject_ids}
     rows = await db.execute(
         select(Enrollment.subject_id, Grade.term, func.count())
         .join(Grade, Grade.enrollment_id == Enrollment.id)
@@ -63,7 +51,8 @@ async def grades_per_term(db: AsyncSession, subject_ids: list[int]) -> dict[int,
         .group_by(Enrollment.subject_id, Grade.term)
     )
     for subject_id, term, count in rows:
-        counts[subject_id][term] = count
+        if term in counts[subject_id]:
+            counts[subject_id][term] = count
     return counts
 
 
@@ -79,14 +68,27 @@ async def get_teacher_subject(db: AsyncSession, teacher_id: int, subject_id: int
     return subject
 
 
-async def subject_roster(db: AsyncSession, subject_id: int) -> list[StudentRow]:
+def student_row(student: User, grades: dict[int, Decimal | None], rules: GradingRules):
+    final = rules.final_grade(grades)
+    return StudentRow(
+        student=student,
+        grades=grades,
+        average=rules.average(grades),
+        final_grade=final,
+        passed=None if final is None else rules.passes(final),
+    )
+
+
+async def subject_roster(
+    db: AsyncSession, subject_id: int, rules: GradingRules
+) -> list[StudentRow]:
     """Estudiantes matriculados en la materia con sus notas por lapso."""
     enrollments = (
         await db.execute(
             select(Enrollment.id, User)
             .join(User, User.id == Enrollment.student_id)
             .where(Enrollment.subject_id == subject_id)
-            .order_by(User.full_name)
+            .order_by(User.last_name, User.first_name)
         )
     ).all()
     grades: dict[int, dict[int, Decimal]] = defaultdict(dict)
@@ -98,9 +100,19 @@ async def subject_roster(db: AsyncSession, subject_id: int) -> list[StudentRow]:
     for enrollment_id, term, value in rows:
         grades[enrollment_id][term] = value
     return [
-        StudentRow(student=user, grades={t: grades[enrollment_id].get(t) for t in TERMS})
+        student_row(user, {t: grades[enrollment_id].get(t) for t in rules.terms}, rules)
         for enrollment_id, user in enrollments
     ]
+
+
+def validate_entries(entries: list[tuple[int, int, Decimal | None]], rules: GradingRules) -> None:
+    """Lapso y nota dentro de la configuración vigente (todo o nada)."""
+    for student_id, term, value in entries:
+        problem = rules.term_error(term) or (None if value is None else rules.grade_error(value))
+        if problem:
+            raise InvalidDataError(
+                f"{problem} (estudiante {student_id}, {rules.term_label.lower()} {term})"
+            )
 
 
 async def save_grades(
@@ -108,11 +120,14 @@ async def save_grades(
     subject_id: int,
     entries: list[tuple[int, int, Decimal | None]],
     updated_by_id: int,
+    rules: GradingRules,
 ) -> None:
     """Crea, modifica o borra (valor None) notas de (estudiante, lapso, valor).
 
-    Todo o nada: si algún estudiante no está matriculado no se guarda ninguna.
+    Todo o nada: si algún estudiante no está matriculado o alguna nota no cumple la
+    configuración académica no se guarda ninguna.
     """
+    validate_entries(entries, rules)
     student_ids = {student_id for student_id, _, _ in entries}
     enrollment_by_student = dict(
         (

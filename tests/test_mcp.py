@@ -82,7 +82,7 @@ async def test_herramientas_devuelven_las_notas_del_dueno_del_token(
 
     fake_identity(monkeypatch, campus["students"]["Ana"]["id"])
     detail = await call(sessionmaker, "notas_de_materia", {"materia": "física"})
-    assert detail["notas_por_lapso"]["lapso_1"] == 10
+    assert detail["notas"]["Lapso 1"] == 10
 
 
 async def test_sin_identidad_las_herramientas_fallan(sessionmaker, monkeypatch):

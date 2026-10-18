@@ -35,6 +35,13 @@ class ConflictError(AppError):
     status_code = status.HTTP_409_CONFLICT
 
 
+class InvalidDataError(AppError):
+    """Datos con la forma correcta pero que incumplen una regla de negocio (p. ej. una nota
+    fuera de la escala configurada)."""
+
+    status_code = status.HTTP_422_UNPROCESSABLE_CONTENT
+
+
 async def _handle_app_error(_: Request, exc: AppError) -> JSONResponse:
     return JSONResponse(
         status_code=exc.status_code, content={"detail": exc.detail}, headers=exc.headers

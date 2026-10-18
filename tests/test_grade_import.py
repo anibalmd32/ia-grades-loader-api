@@ -14,6 +14,7 @@ from app.services.grade_import import (
     parse_value,
 )
 from app.services.import_jobs import claim_next
+from app.services.rules import DEFAULT_RULES
 from tests.import_helpers import FakeLLM, entry, process_queue, upload
 
 # --- Parsers -----------------------------------------------------------------
@@ -54,14 +55,14 @@ def test_parse_cedula(raw, expected):
     ],
 )
 def test_parse_value(raw, expected):
-    assert parse_value(raw) == expected
+    assert parse_value(raw, DEFAULT_RULES) == expected
 
 
 @pytest.mark.parametrize(
     ("raw", "expected"), [(2, 2), ("2", 2), ("Lapso 3", 3), (4, None), ("1 y 2", None)]
 )
 def test_parse_term(raw, expected):
-    assert parse_term(raw) == expected
+    assert parse_term(raw, DEFAULT_RULES) == expected
 
 
 def test_normalize_name():
@@ -256,3 +257,24 @@ async def test_error_inesperado(client, course, use_llm, sessionmaker):
 async def test_materia_ajena(client, course, login_as):
     other = await login_as(Role.TEACHER, email="otro@uni.edu")
     assert (await upload(client, course, headers=other)).status_code == 404
+
+
+def test_identifica_por_nombre_en_cualquier_orden():
+    """En las planillas el nombre puede venir como "Apellido Nombre"."""
+    from app.models import Nationality, Role, User
+    from app.services.grade_import import ExtractedGrade, PreviewRow, _Roster
+    from app.services.grades import student_row
+
+    ana = User(
+        id=1,
+        role=Role.STUDENT,
+        first_name="Ana María",
+        last_name="Pérez",
+        nationality=Nationality.VENEZOLANO,
+        cedula=1,
+    )
+    roster = _Roster([student_row(ana, {1: None, 2: None, 3: None}, DEFAULT_RULES)])
+    for name in ("Pérez Ana María", "ana maria perez"):
+        row = PreviewRow(extracted=ExtractedGrade(student_name=name))
+        roster.match(row)
+        assert row.student is ana, name

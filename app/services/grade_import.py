@@ -17,12 +17,13 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import LLMClient
-from app.ai.prompts import GRADES_EXTRACTION_SYSTEM, grades_extraction_user
+from app.ai.prompts import grades_extraction_system, grades_extraction_user
 from app.models import Subject, User
-from app.models.enrollment import GRADE_DECIMALS, MAX_GRADE, MIN_GRADE, TERMS_PER_SEMESTER
 from app.schemas.academic import SubjectRead
 from app.schemas.grades import ImportPreview, ImportRow, ImportSummary, StudentSummary
 from app.services import excel, grades
+from app.services import rules as rules_service
+from app.services.rules import GradingRules
 
 Status = Literal["ok", "warning", "error"]
 
@@ -95,7 +96,7 @@ def parse_cedula(raw: str | int | None) -> tuple[str | None, int] | None:
     return letter, int(digits)
 
 
-def parse_term(raw: int | str | None) -> int | None:
+def parse_term(raw: int | str | None, rules: GradingRules) -> int | None:
     """Acepta 2, "2" o "Lapso 2"; solo si es un lapso válido."""
     if raw is None:
         return None
@@ -103,14 +104,14 @@ def parse_term(raw: int | str | None) -> int | None:
     if len(digits) != 1:
         return None
     term = int(digits[0])
-    return term if 1 <= term <= TERMS_PER_SEMESTER else None
+    return term if rules.term_error(term) is None else None
 
 
-def parse_value(raw: float | int | str | None) -> tuple[Decimal | None, bool]:
+def parse_value(raw: float | int | str | None, rules: GradingRules) -> tuple[Decimal | None, bool]:
     """Convierte la nota a Decimal (acepta 15, "15,5", 15.75...).
 
-    Devuelve (nota, redondeada): si trae más de GRADE_DECIMALS decimales se redondea
-    (la mitad hacia arriba) y se avisa. Fuera de 1-20 o no numérica devuelve None.
+    Devuelve (nota, redondeada): si trae más decimales de los admitidos se redondea
+    (la mitad hacia arriba) y se avisa. Fuera de la escala o no numérica devuelve None.
     """
     if raw is None:
         return None, False
@@ -120,8 +121,8 @@ def parse_value(raw: float | int | str | None) -> tuple[Decimal | None, bool]:
         return None, False
     if not number.is_finite():
         return None, False
-    rounded = grades.quantize(number)
-    if not MIN_GRADE <= rounded <= MAX_GRADE:
+    rounded = rules.quantize(number)
+    if not rules.min_grade <= rounded <= rules.max_grade:
         return None, False
     return rounded, rounded != number
 
@@ -135,7 +136,14 @@ class _Roster:
             student = row.student
             if student.cedula is not None:
                 self.by_number.setdefault(student.cedula, []).append(student)
-            self.by_name.setdefault(normalize_name(student.full_name), []).append(student)
+            # En las planillas el nombre puede venir como "Nombre Apellido" o "Apellido Nombre"
+            for name in (
+                f"{student.first_name} {student.last_name}",
+                f"{student.last_name} {student.first_name}",
+            ):
+                students = self.by_name.setdefault(normalize_name(name), [])
+                if student not in students:
+                    students.append(student)
 
     def current_value(self, student: User, term: int) -> int | None:
         row = next(r for r in self.rows if r.student.id == student.id)
@@ -183,25 +191,27 @@ class _Roster:
         row.flag("error", "No se pudo identificar al estudiante (falta cédula y nombre)")
 
 
-def _validate(row: PreviewRow, roster: _Roster) -> None:
+def _validate(row: PreviewRow, roster: _Roster, rules: GradingRules) -> None:
     roster.match(row)
 
-    row.term = parse_term(row.extracted.term)
+    row.term = parse_term(row.extracted.term, rules)
     if row.term is None:
-        row.flag("error", "No se pudo determinar el lapso (1 a 3)")
+        row.flag(
+            "error",
+            f"No se pudo determinar el {rules.term_label.lower()} (1 a {rules.terms_count})",
+        )
 
-    row.value, rounded = parse_value(row.extracted.value)
+    row.value, rounded = parse_value(row.extracted.value, rules)
     if row.value is None:
         row.flag(
             "error",
-            f"Nota inválida «{row.extracted.value}»: debe ser un número del {MIN_GRADE} al "
-            f"{MAX_GRADE}",
+            f"Nota inválida «{row.extracted.value}»: debe ser un número {rules.scale_text}",
         )
     elif rounded:
         row.flag(
             "warning",
             f"Nota «{row.extracted.value}» redondeada a {row.value} "
-            f"({GRADE_DECIMALS} decimales como máximo)",
+            f"({rules.grade_decimals} decimales como máximo)",
         )
 
     if row.extracted.note:
@@ -211,7 +221,7 @@ def _validate(row: PreviewRow, roster: _Roster) -> None:
         row.current_value = roster.current_value(row.student, row.term)
 
 
-def _flag_duplicates(rows: list[PreviewRow]) -> None:
+def _flag_duplicates(rows: list[PreviewRow], rules: GradingRules) -> None:
     seen: dict[tuple[int, int], list[PreviewRow]] = {}
     for row in rows:
         if row.student and row.term:
@@ -220,7 +230,11 @@ def _flag_duplicates(rows: list[PreviewRow]) -> None:
         if len(dupes) > 1:
             where = ", ".join(f"fila {r.extracted.row}" for r in dupes)
             for row in dupes:
-                row.flag("error", f"Nota repetida para el mismo estudiante y lapso ({where})")
+                row.flag(
+                    "error",
+                    f"Nota repetida para el mismo estudiante y {rules.term_label.lower()} "
+                    f"({where})",
+                )
 
 
 async def preview_import(
@@ -232,23 +246,24 @@ async def preview_import(
 ) -> Preview:
     # Leer el Excel consume CPU: en un hilo aparte para no frenar el event loop
     sheets = await asyncio.to_thread(excel.read_workbook, content)
+    rules = await rules_service.get_rules(db)
     extraction = await llm.complete_json(
-        GRADES_EXTRACTION_SYSTEM,
+        grades_extraction_system(rules),
         grades_extraction_user(
-            f"{subject.code} - {subject.name}", default_term, excel.sheets_to_text(sheets)
+            f"{subject.code} - {subject.name}", default_term, excel.sheets_to_text(sheets), rules
         ),
         Extraction,
     )
 
-    roster = _Roster(await grades.subject_roster(db, subject.id))
+    roster = _Roster(await grades.subject_roster(db, subject.id, rules))
     rows = []
     for extracted in extraction.grades:
         if extracted.term is None and default_term:
             extracted.term = default_term
         row = PreviewRow(extracted=extracted)
-        _validate(row, roster)
+        _validate(row, roster, rules)
         rows.append(row)
-    _flag_duplicates(rows)
+    _flag_duplicates(rows, rules)
 
     found = {row.student.id for row in rows if row.student}
     missing = [r.student for r in roster.rows if r.student.id not in found]

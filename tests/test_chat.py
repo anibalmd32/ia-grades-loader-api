@@ -20,14 +20,11 @@ async def test_resumen_de_notas(campus, session):
     assert result["escala"]["nota_aprobatoria"] == 10
     by_code = {m["codigo"]: m for m in result["materias"]}
     assert set(by_code) == {"FIS-101", "MAT-101", "MAT-201"}
-    assert by_code["MAT-101"]["notas_por_lapso"] == {
-        "lapso_1": 15,
-        "lapso_2": 18.5,
-        "lapso_3": None,
-    }
-    assert by_code["MAT-101"]["promedio"] == 16.75
-    assert by_code["FIS-101"]["situacion"]["nota_minima_necesaria_en_cada_lapso_pendiente"] == 10
-    assert by_code["FIS-101"]["situacion"]["lapsos_pendientes"] == [2, 3]
+    assert by_code["MAT-101"]["notas"] == {"Lapso 1": 15, "Lapso 2": 18.5, "Lapso 3": None}
+    assert by_code["MAT-101"]["promedio_actual"] == 16.75
+    assert by_code["MAT-101"]["semestre"] == "2026-I"
+    assert by_code["FIS-101"]["situacion"]["nota_minima_necesaria_en_cada_lapso_sin_nota"] == 10
+    assert by_code["FIS-101"]["situacion"]["lapsos_sin_nota"] == [2, 3]
     assert by_code["MAT-101"]["situacion"]["estado"].startswith("aprobada asegurada")
     assert result["promedio_general"] == 13.38
     json.dumps(result)  # serializable para el modelo
@@ -38,17 +35,17 @@ async def test_notas_de_materia_por_nombre_o_codigo(campus, session, query):
     ana = campus["students"]["Ana"]["id"]
     result = await TOOLS["notas_de_materia"].run(session, ana, {"materia": query})
     assert result["codigo"] == "FIS-101"
-    assert result["notas_por_lapso"]["lapso_1"] == 10
+    assert result["notas"]["Lapso 1"] == 10
 
 
 async def test_notas_de_materia_ambigua_o_inexistente(campus, session):
     ana = campus["students"]["Ana"]["id"]
     ambiguous = await TOOLS["notas_de_materia"].run(session, ana, {"materia": "mate"})
-    assert "varias" in ambiguous["error"]
+    assert "Varias" in ambiguous["aviso"]
     assert {m["codigo"] for m in ambiguous["materias_del_estudiante"]} == {"MAT-101", "MAT-201"}
 
     missing = await TOOLS["notas_de_materia"].run(session, ana, {"materia": "química"})
-    assert "No se encontró" in missing["error"]
+    assert "No cursa" in missing["aviso"]
     assert len(missing["materias_del_estudiante"]) == 3
 
 
@@ -63,7 +60,7 @@ async def test_solo_devuelve_las_materias_propias(campus, session):
     result = await TOOLS["resumen_de_notas"].run(session, beto, {})
     assert [m["codigo"] for m in result["materias"]] == ["MAT-101"]
     other = await TOOLS["notas_de_materia"].run(session, beto, {"materia": "Física"})
-    assert "error" in other  # Física es de Ana, no de Beto
+    assert "aviso" in other  # Física es de Ana, no de Beto
 
 
 # --- Bucle de herramientas del cliente LLM (streaming) ------------------------

@@ -28,7 +28,7 @@ from app.schemas.grades import (
     TermGrade,
 )
 from app.schemas.telegram import TelegramLinkInvite, TelegramStatus
-from app.services import chat, conversations, student_grades
+from app.services import chat, conversations, rules, student_grades
 from app.services import telegram_link as telegram_link_service
 from app.services.student_grades import Standing, SubjectGrades
 
@@ -52,7 +52,7 @@ async def my_subjects(student: Student, db: DbSession) -> StudentOverview:
     """Todas las materias en las que estás matriculado, con la nota de cada lapso
     (null si aún no se ha cargado), el promedio de cada una, el de cada semestre y el
     promedio general."""
-    subjects = await student_grades.student_subjects(db, student.id)
+    subjects = await student_grades.student_subjects(db, student.id, await rules.get_rules(db))
     return StudentOverview(
         subjects=[_to_schema(s) for s in subjects],
         average=student_grades.overall_average(subjects),
@@ -71,7 +71,10 @@ async def my_subjects(student: Student, db: DbSession) -> StudentOverview:
 
 @router.get("/subjects/{subject_id}", summary="Detalle de una materia")
 async def my_subject(subject_id: int, student: Student, db: DbSession) -> StudentSubjectGrades:
-    return _to_schema(await student_grades.student_subject(db, student.id, subject_id))
+    item = await student_grades.student_subject(
+        db, student.id, subject_id, await rules.get_rules(db)
+    )
+    return _to_schema(item)
 
 
 # --- Chat con el asistente ---------------------------------------------------

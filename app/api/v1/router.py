@@ -6,6 +6,7 @@ from app.api.v1.routes import (
     enrollments,
     health,
     semesters,
+    settings,
     setup,
     student,
     subjects,
@@ -17,6 +18,7 @@ from app.api.v1.routes import (
 api_router = APIRouter()
 api_router.include_router(health.router)
 api_router.include_router(setup.router)
+api_router.include_router(settings.router)
 api_router.include_router(auth.router)
 api_router.include_router(users.coordinators_router)
 api_router.include_router(users.teachers_router)

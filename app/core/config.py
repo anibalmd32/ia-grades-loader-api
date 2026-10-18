@@ -53,10 +53,6 @@ class Settings(BaseSettings):
     # Preguntas a la IA por minuto y estudiante (app + Telegram). 0 = sin límite
     chat_rate_limit_per_minute: int = 10
 
-    # --- Reglas académicas ---
-    # Nota mínima para aprobar (la usa la IA para responder "¿voy aprobando?")
-    passing_grade: float = 10
-
     # --- Telegram ---
     telegram_bot_token: SecretStr = SecretStr("")
     telegram_bot_username: str = ""

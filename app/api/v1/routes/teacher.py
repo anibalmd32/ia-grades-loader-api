@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 
 from app.api.deps import DbSession, require_roles
 from app.core.config import get_settings
+from app.core.errors import InvalidDataError
 from app.models import Role, User
 from app.schemas.academic import SubjectRead
 from app.schemas.grades import (
@@ -17,7 +18,8 @@ from app.schemas.grades import (
     TermGrade,
 )
 from app.schemas.import_jobs import ImportJobRead, ImportJobSummary
-from app.services import grades, import_jobs
+from app.services import grades, import_jobs, rules
+from app.services.rules import MAX_TERMS
 from app.worker import notify_new_job
 
 router = APIRouter(prefix="/teacher", tags=["Profesor"])
@@ -26,7 +28,7 @@ Teacher = Annotated[User, Depends(require_roles(Role.TEACHER))]
 
 
 async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
-    roster = await grades.subject_roster(db, subject.id)
+    roster = await grades.subject_roster(db, subject.id, await rules.get_rules(db))
     return SubjectGrades(
         subject=SubjectRead.model_validate(subject),
         students=[
@@ -34,6 +36,8 @@ async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
                 student=StudentSummary.model_validate(row.student),
                 grades=[TermGrade(term=t, value=v) for t, v in row.grades.items()],
                 average=row.average,
+                final_grade=row.final_grade,
+                passed=row.passed,
             )
             for row in roster
         ],
@@ -44,7 +48,9 @@ async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
 async def my_subjects(teacher: Teacher, db: DbSession) -> list[TeacherSubject]:
     """Materias asignadas con el número de estudiantes y de notas cargadas por lapso."""
     rows = await grades.teacher_subjects_with_counts(db, teacher.id)
-    per_term = await grades.grades_per_term(db, [subject.id for subject, _ in rows])
+    per_term = await grades.grades_per_term(
+        db, [subject.id for subject, _ in rows], await rules.get_rules(db)
+    )
     return [
         TeacherSubject(
             **{
@@ -70,7 +76,8 @@ async def save_subject_grades(
 ) -> SubjectGrades:
     """Envía solo las notas que cambian. `value: null` borra la nota de ese lapso.
 
-    Es todo o nada: si algún estudiante no está matriculado no se guarda ninguna.
+    Es todo o nada: si algún estudiante no está matriculado (404) o alguna nota o lapso no
+    cumple la configuración académica (422) no se guarda ninguna.
 
     Si las notas salen de una importación, envía su `import_job_id` para marcarla como
     confirmada (debe ser de esta materia y estar en `done`; si no, 409).
@@ -83,6 +90,7 @@ async def save_subject_grades(
         subject.id,
         [(g.student_id, g.term, g.value) for g in data.grades],
         updated_by_id=teacher.id,
+        rules=await rules.get_rules(db),
     )
     return await _subject_grades(db, subject)
 
@@ -99,7 +107,7 @@ async def enqueue_grades_import(
     file: Annotated[UploadFile, File(description="Planilla .xlsx de la materia")],
     default_term: Annotated[
         int | None,
-        Form(ge=1, le=3, description="Lapso a usar si la planilla no lo indica"),
+        Form(ge=1, le=MAX_TERMS, description="Lapso a usar si la planilla no lo indica"),
     ] = None,
 ) -> ImportJobSummary:
     """Responde al instante con el trabajo en cola (`status: pending`); la IA procesa el
@@ -110,6 +118,10 @@ async def enqueue_grades_import(
     quieras guardar (ok o warning, ya corregidas) a `PUT /teacher/subjects/{id}/grades`.
     """
     await grades.get_teacher_subject(db, teacher.id, subject_id)
+    if default_term is not None:
+        problem = (await rules.get_rules(db)).term_error(default_term)
+        if problem:
+            raise InvalidDataError(problem)
     max_mb = get_settings().max_upload_size_mb
     content = await file.read(max_mb * 1024 * 1024 + 1)
     if len(content) > max_mb * 1024 * 1024:

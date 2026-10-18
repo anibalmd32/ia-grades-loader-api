@@ -1,6 +1,9 @@
+from dataclasses import replace
+
 import pytest
 
 from app.models import Role
+from app.services.rules import DEFAULT_RULES
 
 
 async def test_mis_materias(client, campus):
@@ -96,19 +99,18 @@ def D(value):  # noqa: N802
 def test_proyeccion(grades, standing, final, needed):
     from app.services.student_grades import project
 
-    result = project({t: D(v) for t, v in enumerate(grades, start=1)})
+    result = project({t: D(v) for t, v in enumerate(grades, start=1)}, DEFAULT_RULES)
     assert result.standing == standing
     assert result.final_grade == D(final)
     assert result.needed_average == D(needed)
     assert result.pending_terms == [t for t, v in enumerate(grades, start=1) if v is None]
 
 
-def test_proyeccion_respeta_la_nota_aprobatoria_configurada(monkeypatch):
-    from app.core.config import get_settings
+def test_proyeccion_respeta_la_nota_aprobatoria_configurada():
     from app.services.student_grades import project
 
-    monkeypatch.setattr(get_settings(), "passing_grade", 12)
-    assert project({1: D(12), 2: D(12), 3: None}).needed_average == D("12.00")
+    rules = replace(DEFAULT_RULES, passing_grade=D(12))
+    assert project({1: D(12), 2: D(12), 3: None}, rules).needed_average == D("12.00")
 
 
 async def test_la_api_devuelve_la_proyeccion(client, campus):
