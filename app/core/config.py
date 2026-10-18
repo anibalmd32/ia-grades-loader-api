@@ -3,11 +3,13 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import SecretStr, model_validator
+from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEFAULT_JWT_SECRET = "change-me"
 MIN_JWT_SECRET_LENGTH = 32
+# Esquemas de MySQL sin driver asíncrono que se convierten a mysql+asyncmy
+SYNC_MYSQL_SCHEMES = {"mysql", "mysql+mysqldb", "mysql+pymysql", "mariadb"}
 
 
 class Settings(BaseSettings):
@@ -81,6 +83,17 @@ class Settings(BaseSettings):
     import_job_max_attempts: int = 3
     # Trabajos pendientes o en proceso que puede tener un profesor a la vez
     import_max_pending_per_teacher: int = 5
+
+    @field_validator("database_url")
+    @classmethod
+    def _use_async_mysql_driver(cls, url: str) -> str:
+        """Los proveedores de MySQL (Render, Railway, Aiven...) dan la URL como mysql://...
+        Sin driver, SQLAlchemy usaría MySQLdb, que no está instalado: se fuerza asyncmy."""
+        url = url.strip()
+        scheme, sep, rest = url.partition("://")
+        if sep and scheme.lower() in SYNC_MYSQL_SCHEMES:
+            return f"mysql+asyncmy://{rest}"
+        return url
 
     @model_validator(mode="after")
     def _check_jwt_secret(self) -> "Settings":
