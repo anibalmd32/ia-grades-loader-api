@@ -46,6 +46,21 @@ def _fast_password_hashing():
     security._password_hash = original
 
 
+@pytest.fixture(autouse=True, scope="session")
+def _test_jwt_secret():
+    """Clave JWT fija para los tests: sin .env (p. ej. en el CI) sería la de por defecto,
+    demasiado corta, y PyJWT avisa (InsecureKeyLengthWarning), que pytest trata como error."""
+    from pydantic import SecretStr
+
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    original = settings.jwt_secret_key
+    settings.jwt_secret_key = SecretStr("clave-de-pruebas-" + "x" * 48)
+    yield
+    settings.jwt_secret_key = original
+
+
 @pytest.fixture(autouse=True)
 def _reset_rate_limits():
     from app.services.chat import question_limiter
