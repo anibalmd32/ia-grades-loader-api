@@ -65,3 +65,5 @@ class ImportJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Cuándo guardó el profesor las notas de esta previsualización (null = sin confirmar)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)

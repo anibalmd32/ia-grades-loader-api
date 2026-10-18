@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from app.core.config import get_settings
+from app.core.errors import ConflictError
 from app.db.base import Base
 from app.models import (
     Enrollment,
@@ -20,7 +21,7 @@ from app.models import (
     User,
 )
 from app.models.import_job import utcnow
-from app.services.import_jobs import claim_next, enqueue, recover_stale
+from app.services.import_jobs import claim_next, enqueue, mark_confirmed, recover_stale
 from app.worker import ImportWorker
 from tests.import_helpers import SAMPLE, FakeLLM, entry, upload
 
@@ -179,3 +180,60 @@ async def test_listado_y_privacidad(client, course, login_as):
     other = await login_as(Role.TEACHER, email="otro@uni.edu")
     assert (await client.get(f"/teacher/import-jobs/{job_id}", headers=other)).status_code == 404
     assert (await client.get("/teacher/import-jobs", headers=other)).json() == []
+
+
+async def test_resumen_incluye_intentos_y_confirmacion(client, course, sessionmaker):
+    job_id = (await upload(client, course)).json()["id"]
+    url = f"/teacher/subjects/{course['subject_id']}/grades"
+    ana = course["students"]["Ana Pérez"]
+    body = {"grades": [{"student_id": ana, "term": 1, "value": 15}], "import_job_id": job_id}
+
+    listed = (await client.get("/teacher/import-jobs", headers=course["headers"])).json()
+    assert listed[0]["attempts"] == 0
+    assert listed[0]["confirmed_at"] is None
+
+    # Sin previsualización lista no se puede confirmar
+    pending = await client.put(url, json=body, headers=course["headers"])
+    assert pending.status_code == 409
+
+    async with sessionmaker() as db:
+        await claim_next(db)
+        job = await db.get(ImportJob, job_id)
+        job.status, job.finished_at = JobStatus.DONE, utcnow()
+        await db.commit()
+
+    # Si guardar las notas falla, la importación sigue sin confirmar
+    bad = {**body, "grades": [{"student_id": 999_999, "term": 1, "value": 15}]}
+    assert (await client.put(url, json=bad, headers=course["headers"])).status_code == 404
+    detail = await client.get(f"/teacher/import-jobs/{job_id}", headers=course["headers"])
+    assert detail.json()["confirmed_at"] is None
+
+    assert (await client.put(url, json=body, headers=course["headers"])).status_code == 200
+    detail = (await client.get(f"/teacher/import-jobs/{job_id}", headers=course["headers"])).json()
+    assert detail["attempts"] == 1
+    assert detail["confirmed_at"] is not None
+
+    # Un id de importación ajeno o inexistente no se acepta
+    unknown = {**body, "import_job_id": "no-existe"}
+    assert (await client.put(url, json=unknown, headers=course["headers"])).status_code == 404
+
+
+async def test_guardar_notas_sin_importacion_sigue_igual(client, course):
+    url = f"/teacher/subjects/{course['subject_id']}/grades"
+    ana = course["students"]["Ana Pérez"]
+    response = await client.put(
+        url,
+        json={"grades": [{"student_id": ana, "term": 2, "value": 11.5}]},
+        headers=course["headers"],
+    )
+    assert response.status_code == 200
+
+
+async def test_no_confirma_importaciones_de_otra_materia(client, course, sessionmaker):
+    job_id = (await upload(client, course)).json()["id"]
+    async with sessionmaker() as db:
+        job = await db.get(ImportJob, job_id)
+        job.status = JobStatus.DONE
+        await db.commit()
+        with pytest.raises(ConflictError, match="otra materia"):
+            await mark_confirmed(db, job.teacher_id, course["subject_id"] + 1, job_id)

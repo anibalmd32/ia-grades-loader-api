@@ -64,6 +64,11 @@ class GradeEntry(BaseModel):
 
 class GradesUpdate(BaseModel):
     grades: list[GradeEntry] = Field(min_length=1)
+    import_job_id: str | None = Field(
+        default=None,
+        description="Si las notas vienen de una importación de Excel, su id: la importación "
+        "queda marcada como confirmada (`confirmed_at`)",
+    )
 
     @model_validator(mode="after")
     def _no_duplicates(self) -> "GradesUpdate":

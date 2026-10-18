@@ -26,6 +26,13 @@ class ImportJobSummary(BaseModel):
     created_at: UtcDatetime
     started_at: UtcDatetime | None
     finished_at: UtcDatetime | None
+    attempts: int = Field(
+        description="Veces que el worker ha intentado procesar el archivo (se reintenta si falla)"
+    )
+    confirmed_at: UtcDatetime | None = Field(
+        description="Cuándo se guardaron las notas de esta importación; null = sin confirmar. "
+        "Se marca al enviar `import_job_id` en `PUT /teacher/subjects/{id}/grades`"
+    )
 
 
 class ImportJobRead(ImportJobSummary):

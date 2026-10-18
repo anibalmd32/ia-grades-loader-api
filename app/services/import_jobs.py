@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.client import LLMClient
 from app.core.config import get_settings
-from app.core.errors import AppError, NotFoundError
+from app.core.errors import AppError, ConflictError, NotFoundError
 from app.models import ImportJob, JobStatus, Subject
 from app.models.import_job import ACTIVE_STATUSES, utcnow
 from app.services import grade_import
@@ -70,6 +70,20 @@ async def get_job(db: AsyncSession, teacher_id: int, job_id: str) -> ImportJob:
     job = await db.get(ImportJob, job_id)
     if job is None or job.teacher_id != teacher_id:
         raise NotFoundError("Importación no encontrada")
+    return job
+
+
+async def mark_confirmed(
+    db: AsyncSession, teacher_id: int, subject_id: int, job_id: str
+) -> ImportJob:
+    """Marca la importación como confirmada. No hace commit: se guarda junto con las notas
+    (si guardar las notas falla, la importación sigue sin confirmar)."""
+    job = await get_job(db, teacher_id, job_id)
+    if job.subject_id != subject_id:
+        raise ConflictError("La importación es de otra materia")
+    if job.status != JobStatus.DONE:
+        raise ConflictError("La importación aún no tiene una previsualización lista")
+    job.confirmed_at = utcnow()
     return job
 
 

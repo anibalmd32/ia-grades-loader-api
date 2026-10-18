@@ -63,8 +63,13 @@ async def save_subject_grades(
     """Envía solo las notas que cambian. `value: null` borra la nota de ese lapso.
 
     Es todo o nada: si algún estudiante no está matriculado no se guarda ninguna.
+
+    Si las notas salen de una importación, envía su `import_job_id` para marcarla como
+    confirmada (debe ser de esta materia y estar en `done`; si no, 409).
     """
     subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    if data.import_job_id is not None:
+        await import_jobs.mark_confirmed(db, teacher.id, subject.id, data.import_job_id)
     await grades.save_grades(
         db,
         subject.id,
