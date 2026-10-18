@@ -1,7 +1,10 @@
 from datetime import UTC, datetime
 from typing import Annotated
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
+
+from app.schemas.settings import GradingRulesRead
+from app.services.rules import DEFAULT_RULES, from_snapshot
 
 Name = Annotated[str, AfterValidator(str.strip), Field(min_length=1, max_length=150)]
 SemesterName = Annotated[str, AfterValidator(str.strip), Field(min_length=1, max_length=50)]
@@ -38,6 +41,20 @@ class SemesterRead(BaseModel):
         datetime | None,
         AfterValidator(lambda d: d.replace(tzinfo=UTC) if d and d.tzinfo is None else d),
     ] = None
+    rules: Annotated[
+        GradingRulesRead | None,
+        BeforeValidator(
+            lambda v: (
+                GradingRulesRead.from_rules(from_snapshot(DEFAULT_RULES, v))
+                if isinstance(v, dict) and "summary" not in v
+                else v
+            )
+        ),
+    ] = Field(
+        default=None,
+        description="Reglas de evaluación congeladas al cerrar el periodo (se conservan si se "
+        "reabre). null = el periodo usa la configuración académica vigente",
+    )
     subjects_count: int | None = Field(default=None, description="Materias." + COUNT_NOTE)
 
 

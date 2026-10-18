@@ -5,14 +5,15 @@ GradingRules, de modo que cambiar la configuración cambia a la vez la carga, la
 la importación con IA y el asistente.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import ROUND_CEILING, ROUND_HALF_UP, Decimal
+from typing import Any
 
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
-from app.models import AcademicSettings, Grade, PeriodType
+from app.models import AcademicSettings, Enrollment, Grade, PeriodType, Semester, Subject
 from app.models.settings import SETTINGS_ID
 
 # Límites de lo configurable (también los usa la validación de entrada)
@@ -177,6 +178,49 @@ class GradingRules:
 
 DEFAULT_RULES = GradingRules()
 
+# Lo que se congela en un periodo al cerrarlo (lo demás, nombres de la institución y del
+# periodo, se sigue tomando de la configuración vigente)
+GRADING_FIELDS = (
+    "terms_count",
+    "term_label",
+    "term_weights",
+    "min_grade",
+    "max_grade",
+    "passing_grade",
+    "grade_decimals",
+    "round_final_grade",
+)
+
+
+def snapshot(rules: GradingRules) -> dict[str, Any]:
+    """Reglas de evaluación en JSON (decimales como texto para no perder exactitud)."""
+    data = {name: getattr(rules, name) for name in GRADING_FIELDS}
+    for name in ("min_grade", "max_grade", "passing_grade"):
+        data[name] = str(data[name])
+    if data["term_weights"] is not None:
+        data["term_weights"] = [str(w) for w in data["term_weights"]]
+    return data
+
+
+def from_snapshot(base: GradingRules, data: dict[str, Any]) -> GradingRules:
+    weights = data.get("term_weights")
+    return replace(
+        base,
+        terms_count=data["terms_count"],
+        term_label=data["term_label"],
+        term_weights=None if weights is None else tuple(Decimal(str(w)) for w in weights),
+        min_grade=Decimal(str(data["min_grade"])),
+        max_grade=Decimal(str(data["max_grade"])),
+        passing_grade=Decimal(str(data["passing_grade"])),
+        grade_decimals=data["grade_decimals"],
+        round_final_grade=data["round_final_grade"],
+    )
+
+
+def for_semester(current: GradingRules, semester: Semester) -> GradingRules:
+    """Reglas con las que se evalúa un periodo: las congeladas o, si no tiene, las vigentes."""
+    return current if semester.rules is None else from_snapshot(current, semester.rules)
+
 
 def _from_row(row: AcademicSettings) -> GradingRules:
     return GradingRules(
@@ -202,11 +246,24 @@ async def get_rules(db: AsyncSession) -> GradingRules:
     return DEFAULT_RULES if row is None else _from_row(row)
 
 
+def _grades_following_current_rules():
+    """Notas de periodos sin reglas congeladas (las únicas a las que afecta el cambio)."""
+    return (
+        select(Grade)
+        .join(Enrollment, Enrollment.id == Grade.enrollment_id)
+        .join(Subject, Subject.id == Enrollment.subject_id)
+        .join(Semester, Semester.id == Subject.semester_id)
+        .where(Semester.rules.is_(None))
+    )
+
+
 async def _check_existing_grades(db: AsyncSession, new: GradingRules) -> None:
-    """Las notas ya cargadas tienen que seguir siendo válidas con las reglas nuevas."""
+    """Las notas ya cargadas tienen que seguir siendo válidas con las reglas nuevas (salvo
+    las de periodos con reglas congeladas, que no cambian)."""
     label = new.term_label_plural.lower()
+    affected = _grades_following_current_rules().subquery()
     out_of_terms = await db.scalar(
-        select(func.count()).select_from(Grade).where(Grade.term > new.terms_count)
+        select(func.count()).select_from(affected).where(affected.c.term > new.terms_count)
     )
     if out_of_terms:
         raise ConflictError(
@@ -215,8 +272,8 @@ async def _check_existing_grades(db: AsyncSession, new: GradingRules) -> None:
         )
     out_of_scale = await db.scalar(
         select(func.count())
-        .select_from(Grade)
-        .where(or_(Grade.value < new.min_grade, Grade.value > new.max_grade))
+        .select_from(affected)
+        .where(or_(affected.c.value < new.min_grade, affected.c.value > new.max_grade))
     )
     if out_of_scale:
         raise ConflictError(
@@ -224,7 +281,7 @@ async def _check_existing_grades(db: AsyncSession, new: GradingRules) -> None:
             "Corrígelas antes de cambiar la escala."
         )
     if new.grade_decimals < MAX_DECIMALS:
-        values = await db.scalars(select(Grade.value).distinct())
+        values = await db.scalars(select(affected.c.value).distinct())
         too_precise = next((v for v in values if new.grade_error(Decimal(v))), None)
         if too_precise is not None:
             raise ConflictError(

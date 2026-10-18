@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
 from app.models import Enrollment, Grade, Semester, Subject, TeacherSubject, User
-from app.services.rules import GradingRules
+from app.services.rules import GradingRules, for_semester
 
 
 class Standing(StrEnum):
@@ -71,7 +71,10 @@ class SubjectGrades:
 async def student_subjects(
     db: AsyncSession, student_id: int, rules: GradingRules, subject_id: int | None = None
 ) -> list[SubjectGrades]:
-    """Materias en las que está matriculado el estudiante, con sus notas por lapso."""
+    """Materias en las que está matriculado el estudiante, con sus notas por lapso.
+
+    `rules` son las vigentes; cada materia se evalúa con las de su periodo (pueden estar
+    congeladas si el periodo se cerró)."""
     query = (
         select(Enrollment.id, Subject)
         .join(Subject, Subject.id == Enrollment.subject_id)
@@ -104,15 +107,18 @@ async def student_subjects(
     for sid, name in rows:
         teachers[sid].append(name)
 
-    return [
-        SubjectGrades(
-            subject=subject,
-            teachers=teachers[subject.id],
-            grades={t: grades[enrollment_id].get(t) for t in rules.terms},
-            rules=rules,
+    result = []
+    for enrollment_id, subject in enrollments:
+        subject_rules = for_semester(rules, subject.semester)
+        result.append(
+            SubjectGrades(
+                subject=subject,
+                teachers=teachers[subject.id],
+                grades={t: grades[enrollment_id].get(t) for t in subject_rules.terms},
+                rules=subject_rules,
+            )
         )
-        for enrollment_id, subject in enrollments
-    ]
+    return result
 
 
 async def student_subject(

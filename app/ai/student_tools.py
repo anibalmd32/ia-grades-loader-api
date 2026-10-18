@@ -58,6 +58,9 @@ def _subject_dict(item: SubjectGrades) -> dict[str, Any]:
         "promedio_actual": _number(item.average),
         # Calculada por el servidor: el modelo debe usar este dato, no hacer la cuenta
         "situacion": _situation(item),
+        # Un periodo cerrado conserva las reglas con que se evaluó
+        "regla_de_la_definitiva": rules.final_grade_text,
+        "escala_de_la_materia": f"{rules.scale_text}, se aprueba con {fmt(rules.passing_grade)}",
     }
 
 

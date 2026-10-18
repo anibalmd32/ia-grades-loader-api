@@ -88,3 +88,66 @@ async def test_periodo_cerrado_bloquea_notas_importaciones_y_matriculas(client, 
         headers=teacher,
     )
     assert grades.status_code == 200
+
+
+# --- Reglas congeladas ------------------------------------------------------------
+
+NEW_RULES = {
+    "institution_name": "Universidad",
+    "period_type": "semester",
+    "terms_count": 4,
+    "term_label": "Corte",
+    "term_weights": None,
+    "min_grade": 0,
+    "max_grade": 100,
+    "passing_grade": 60,
+    "grade_decimals": 0,
+    "round_final_grade": False,
+}
+
+
+async def test_cerrar_congela_las_reglas_y_cambiar_la_configuracion_no_lo_afecta(
+    client, coord, campus, login_as
+):
+    admin = await login_as(Role.SUPER_ADMIN, email="admin@uni.edu")
+    mat = campus["subjects"]["MAT-101"]
+    teacher = campus["teachers"]["Pedro Profe"]
+    ana = campus["students"]["Ana"]
+
+    # Con notas 1-20 cargadas en 2026-I no se puede pasar a 0-100... salvo que se cierre
+    assert (
+        await client.put("/settings/academic", json=NEW_RULES, headers=admin)
+    ).status_code == 409
+    closed = (await client.post(f"/semesters/{mat['semester']['id']}/close", headers=coord)).json()
+    assert closed["rules"]["terms_count"] == 3
+    assert closed["rules"]["summary"].startswith(
+        "La definitiva es el promedio simple de los 3 lapsos"
+    )
+    changed = await client.put("/settings/academic", json=NEW_RULES, headers=admin)
+    assert changed.status_code == 200, changed.text
+
+    # El periodo cerrado se sigue viendo con sus reglas; el abierto, con las nuevas
+    old = (await client.get(f"/teacher/subjects/{mat['id']}/grades", headers=teacher)).json()
+    assert [g["term"] for g in old["students"][0]["grades"]] == [1, 2, 3]
+    student = (await client.get("/student/subjects", headers=ana["headers"])).json()
+    terms = {s["subject"]["code"]: len(s["grades"]) for s in student["subjects"]}
+    assert terms == {"FIS-101": 3, "MAT-101": 3, "MAT-201": 4}
+    mat101 = next(s for s in student["subjects"] if s["subject"]["code"] == "MAT-101")
+    assert mat101["subject"]["semester"]["rules"]["max_grade"] == 20
+    mat201 = next(s for s in student["subjects"] if s["subject"]["code"] == "MAT-201")
+    assert mat201["subject"]["semester"]["rules"] is None
+    # MAT-101: 15 y 18.5 de 20 -> sigue asegurada con la escala vieja
+    assert mat101["projection"]["standing"] == "secured"
+
+    # Reabierto conserva sus reglas: valida con 1-20 y 3 lapsos
+    await client.post(f"/semesters/{mat['semester']['id']}/reopen", headers=coord)
+    url = f"/teacher/subjects/{mat['id']}/grades"
+    entry = {"student_id": ana["id"], "term": 3, "value": 50}
+    assert (await client.put(url, json={"grades": [entry]}, headers=teacher)).status_code == 422
+    entry = {"student_id": ana["id"], "term": 4, "value": 15}
+    assert (await client.put(url, json={"grades": [entry]}, headers=teacher)).status_code == 422
+    entry = {"student_id": ana["id"], "term": 3, "value": 15.5}
+    assert (await client.put(url, json={"grades": [entry]}, headers=teacher)).status_code == 200
+
+    subjects = (await client.get("/teacher/subjects", headers=teacher)).json()
+    assert {s["code"]: len(s["grades_count"]) for s in subjects} == {"FIS-101": 3, "MAT-101": 3}

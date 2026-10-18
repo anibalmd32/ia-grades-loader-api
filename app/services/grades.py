@@ -40,10 +40,12 @@ async def teacher_subjects_with_counts(
 
 
 async def grades_per_term(
-    db: AsyncSession, subject_ids: list[int], rules: GradingRules
+    db: AsyncSession, rules_by_subject: dict[int, GradingRules]
 ) -> dict[int, dict[int, int]]:
-    """Notas cargadas en cada lapso de cada materia (siempre todos los lapsos, 0 si no hay)."""
-    counts = {sid: dict.fromkeys(rules.terms, 0) for sid in subject_ids}
+    """Notas cargadas en cada lapso de cada materia (siempre todos sus lapsos, 0 si no hay).
+    Recibe las reglas de cada materia (las de su periodo)."""
+    subject_ids = list(rules_by_subject)
+    counts = {sid: dict.fromkeys(r.terms, 0) for sid, r in rules_by_subject.items()}
     rows = await db.execute(
         select(Enrollment.subject_id, Grade.term, func.count())
         .join(Grade, Grade.enrollment_id == Enrollment.id)

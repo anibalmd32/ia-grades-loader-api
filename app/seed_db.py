@@ -61,6 +61,7 @@ from app.models.installation import INSTALLATION_ID
 from app.models.settings import SETTINGS_ID
 from app.schemas.academic import SubjectRead
 from app.schemas.grades import ImportPreview, ImportRow, ImportSummary, StudentSummary
+from app.services.rules import GradingRules, snapshot
 
 DEFAULT_PASSWORD = "demo1234"
 INSTITUTION = "Universidad Demo"
@@ -250,6 +251,8 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
         if semester_name == CLOSED_SEMESTER:
             semester.is_closed = True
             semester.closed_at = now - timedelta(days=30)
+            # Al cerrarlo se congelaron sus reglas (las mismas que la configuración)
+            semester.rules = snapshot(GradingRules(institution_name=INSTITUTION))
         db.add(semester)
         for code, name in items:
             subjects[code] = Subject(code=code, name=name, semester=semester)

@@ -27,8 +27,12 @@ router = APIRouter(prefix="/teacher", tags=["Profesor"])
 Teacher = Annotated[User, Depends(require_roles(Role.TEACHER))]
 
 
+async def _rules_for(db: DbSession, subject) -> rules.GradingRules:
+    return rules.for_semester(await rules.get_rules(db), subject.semester)
+
+
 async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
-    roster = await grades.subject_roster(db, subject.id, await rules.get_rules(db))
+    roster = await grades.subject_roster(db, subject.id, await _rules_for(db, subject))
     return SubjectGrades(
         subject=SubjectRead.model_validate(subject),
         students=[
@@ -48,8 +52,9 @@ async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
 async def my_subjects(teacher: Teacher, db: DbSession) -> list[TeacherSubject]:
     """Materias asignadas con el número de estudiantes y de notas cargadas por lapso."""
     rows = await grades.teacher_subjects_with_counts(db, teacher.id)
+    current = await rules.get_rules(db)
     per_term = await grades.grades_per_term(
-        db, [subject.id for subject, _ in rows], await rules.get_rules(db)
+        db, {subject.id: rules.for_semester(current, subject.semester) for subject, _ in rows}
     )
     return [
         TeacherSubject(
@@ -92,7 +97,7 @@ async def save_subject_grades(
         subject.id,
         [(g.student_id, g.term, g.value) for g in data.grades],
         updated_by_id=teacher.id,
-        rules=await rules.get_rules(db),
+        rules=await _rules_for(db, subject),
     )
     return await _subject_grades(db, subject)
 
@@ -122,7 +127,7 @@ async def enqueue_grades_import(
     subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
     await academic.ensure_open(db, subject.semester)
     if default_term is not None:
-        problem = (await rules.get_rules(db)).term_error(default_term)
+        problem = (await _rules_for(db, subject)).term_error(default_term)
         if problem:
             raise InvalidDataError(problem)
     max_mb = get_settings().max_upload_size_mb

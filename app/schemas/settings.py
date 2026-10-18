@@ -95,6 +95,45 @@ class AcademicSettingsUpdate(AcademicSettingsBase):
         )
 
 
+class GradingRulesRead(BaseModel):
+    """Reglas de evaluación congeladas de un periodo cerrado."""
+
+    terms_count: int
+    term_label: str
+    term_label_plural: str
+    term_weights: list[Annotated[Decimal, _AsNumber]] | None
+    term_percentages: list[Annotated[Decimal, _AsNumber]]
+    min_grade: Annotated[Decimal, _AsNumber]
+    max_grade: Annotated[Decimal, _AsNumber]
+    passing_grade: Annotated[Decimal, _AsNumber]
+    grade_decimals: int
+    round_final_grade: bool
+    summary: str
+
+    @classmethod
+    def from_rules(cls, rules: GradingRules) -> "GradingRulesRead":
+        return cls(
+            terms_count=rules.terms_count,
+            term_label=rules.term_label,
+            term_label_plural=rules.term_label_plural,
+            term_weights=None if rules.term_weights is None else list(rules.term_weights),
+            term_percentages=_percentages(rules),
+            min_grade=rules.min_grade,
+            max_grade=rules.max_grade,
+            passing_grade=rules.passing_grade,
+            grade_decimals=rules.grade_decimals,
+            round_final_grade=rules.round_final_grade,
+            summary=rules.final_grade_text,
+        )
+
+
+def _percentages(rules: GradingRules) -> list[Decimal]:
+    if rules.term_weights is not None:
+        return list(rules.term_weights)
+    equal = (Decimal(100) / rules.terms_count).quantize(Decimal("0.01"))
+    return [equal] * rules.terms_count
+
+
 class AcademicSettingsRead(AcademicSettingsBase):
     period_label: str = Field(description="Nombre del periodo en singular", examples=["Semestre"])
     period_label_plural: str = Field(examples=["Semestres"])
@@ -110,11 +149,7 @@ class AcademicSettingsRead(AcademicSettingsBase):
 
     @classmethod
     def from_rules(cls, rules: GradingRules) -> "AcademicSettingsRead":
-        if rules.term_weights is None:
-            equal = (Decimal(100) / rules.terms_count).quantize(Decimal("0.01"))
-            percentages = [equal] * rules.terms_count
-        else:
-            percentages = list(rules.term_weights)
+        percentages = _percentages(rules)
         return cls(
             institution_name=rules.institution_name,
             period_type=rules.period_type,

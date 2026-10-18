@@ -70,6 +70,9 @@ async def set_closed(db: AsyncSession, semester_id: int, closed: bool) -> Semest
     semester = await get_semester(db, semester_id)
     semester.is_closed = closed
     semester.closed_at = utcnow() if closed else None
+    if closed and semester.rules is None:
+        # Se congelan las reglas con que se evaluó; se conservan aunque se reabra
+        semester.rules = rules.snapshot(await rules.get_rules(db))
     await db.commit()
     return semester
 

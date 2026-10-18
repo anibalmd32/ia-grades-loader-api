@@ -246,7 +246,7 @@ async def preview_import(
 ) -> Preview:
     # Leer el Excel consume CPU: en un hilo aparte para no frenar el event loop
     sheets = await asyncio.to_thread(excel.read_workbook, content)
-    rules = await rules_service.get_rules(db)
+    rules = rules_service.for_semester(await rules_service.get_rules(db), subject.semester)
     extraction = await llm.complete_json(
         grades_extraction_system(rules),
         grades_extraction_user(

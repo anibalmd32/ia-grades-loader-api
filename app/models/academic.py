@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -14,6 +15,10 @@ class Semester(TimestampMixin, Base):
     # Cerrado: ya no se cargan ni modifican notas, ni se cambian matrículas o materias
     is_closed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     closed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Reglas de evaluación congeladas al cerrarlo (app.services.rules.snapshot). null = usa
+    # la configuración académica vigente. Así cambiar la configuración no altera periodos
+    # ya cerrados.
+    rules: Mapped[dict[str, Any] | None] = mapped_column(JSON(none_as_null=True))
 
     # lazy="raise": en async hay que cargarlas explícitamente (selectinload)
     subjects: Mapped[list["Subject"]] = relationship(back_populates="semester", lazy="raise")
