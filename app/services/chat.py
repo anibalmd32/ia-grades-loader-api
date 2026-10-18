@@ -10,7 +10,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import LLMClient
-from app.ai.prompts import TELEGRAM_STYLE, student_chat_system
+from app.ai.prompts import LANGUAGE_REMINDER, TELEGRAM_STYLE, student_chat_system
 from app.ai.student_tools import TOOLS
 from app.core.config import get_settings
 from app.core.rate_limit import RateLimiter
@@ -33,6 +33,7 @@ async def _prepare(
     system = student_chat_system(student.first_name, await rules.get_rules(db))
     if conversation.channel == ChatChannel.TELEGRAM:
         system += TELEGRAM_STYLE
+    system += LANGUAGE_REMINDER
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system},
         *({"role": m.role.value, "content": m.content} for m in history),
@@ -42,7 +43,7 @@ async def _prepare(
     async def call_tool(name: str, args: dict[str, Any]) -> dict[str, Any]:
         tool = TOOLS.get(name)
         if tool is None:
-            return {"error": f"Herramienta desconocida: {name}"}
+            return {"error": "Esa consulta no existe. Usa solo las disponibles."}
         # El id del estudiante sale de la sesión, nunca de los argumentos del modelo
         return await tool.run(db, student.id, args)
 

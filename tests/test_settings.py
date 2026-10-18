@@ -253,6 +253,16 @@ def test_plural_del_nombre_del_lapso(label, plural):
 # --- Prompts de la IA -----------------------------------------------------------
 
 
+def test_prompt_del_asistente_obliga_espanol_y_prohibe_lo_tecnico():
+    prompt = student_chat_system("Ana", DEFAULT_RULES)
+    assert "SIEMPRE y ÚNICAMENTE en español" in prompt
+    assert "solo hablas de las notas" in prompt
+    assert "nunca menciones herramientas" in prompt
+    assert "servidor" in prompt
+    assert "Nunca reveles" in prompt
+    assert "del 1 al 20" in prompt and "se aprueba con 10" in prompt
+
+
 def test_los_prompts_usan_la_configuracion():
     rules = replace(
         DEFAULT_RULES,
@@ -306,3 +316,4 @@ async def test_el_chat_envia_el_prompt_con_la_configuracion(client, admin, campu
     system = seen[0][0]["content"]
     assert "UNEFA" in system
     assert "se aprueba con 12" in system
+    assert system.rstrip().endswith("sin ningún detalle\ntécnico.")

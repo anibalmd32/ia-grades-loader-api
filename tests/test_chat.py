@@ -225,7 +225,7 @@ async def test_chat_usa_las_notas_del_estudiante_autenticado(client, campus, scr
     assert {t["function"]["name"] for t in fake.tools} == set(TOOLS)
     # La herramienta devolvió las notas de Beto (no las de Ana)
     assert [m["codigo"] for m in fake.results[0]["materias"]] == ["MAT-101"]
-    assert "desconocida" in fake.results[1]["error"]
+    assert "no existe" in fake.results[1]["error"]
 
 
 async def test_la_conversacion_se_guarda_y_da_contexto(client, campus, scripted_llm):
