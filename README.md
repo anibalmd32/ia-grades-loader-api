@@ -166,6 +166,18 @@ docker compose logs -f api
 Worker de importaciones en un contenedor aparte (opcional): pon `IMPORT_WORKER_EMBEDDED=false`
 y ejecuta `docker compose --profile worker up -d`.
 
+### Reiniciar la base de datos (borrar todos los datos)
+
+Borra todas las tablas y las vuelve a crear vacías con las migraciones; después el
+instalador del super admin vuelve a estar disponible. Pide escribir el nombre de la base
+para confirmar (`--yes` para no preguntar):
+
+```bash
+python -m app.reset_db                          # shell de Render o dentro del contenedor
+docker compose exec api python -m app.reset_db  # con docker compose
+uv run python -m app.reset_db                   # en local (usa el DATABASE_URL del .env)
+```
+
 ### Lista de comprobación para producción
 
 - `APP_ENV=production` en el `.env` del servidor (docker compose usa el valor del `.env`; si
