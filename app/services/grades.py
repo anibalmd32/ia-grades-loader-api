@@ -53,6 +53,20 @@ async def teacher_subjects_with_counts(
     return [(subject, count) for subject, count in await db.execute(query)]
 
 
+async def grades_per_term(db: AsyncSession, subject_ids: list[int]) -> dict[int, dict[int, int]]:
+    """Notas cargadas en cada lapso de cada materia (siempre los 3 lapsos, 0 si no hay)."""
+    counts = {sid: dict.fromkeys(TERMS, 0) for sid in subject_ids}
+    rows = await db.execute(
+        select(Enrollment.subject_id, Grade.term, func.count())
+        .join(Grade, Grade.enrollment_id == Enrollment.id)
+        .where(Enrollment.subject_id.in_(subject_ids))
+        .group_by(Enrollment.subject_id, Grade.term)
+    )
+    for subject_id, term, count in rows:
+        counts[subject_id][term] = count
+    return counts
+
+
 async def get_teacher_subject(db: AsyncSession, teacher_id: int, subject_id: int) -> Subject:
     """La materia solo es visible para el profesor si la tiene asignada."""
     subject = await db.scalar(

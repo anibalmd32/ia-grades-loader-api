@@ -42,10 +42,16 @@ async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
 
 @router.get("/subjects", summary="Mis materias")
 async def my_subjects(teacher: Teacher, db: DbSession) -> list[TeacherSubject]:
+    """Materias asignadas con el número de estudiantes y de notas cargadas por lapso."""
     rows = await grades.teacher_subjects_with_counts(db, teacher.id)
+    per_term = await grades.grades_per_term(db, [subject.id for subject, _ in rows])
     return [
         TeacherSubject(
-            **{**SubjectRead.model_validate(subject).model_dump(), "students_count": count}
+            **{
+                **SubjectRead.model_validate(subject).model_dump(),
+                "students_count": count,
+                "grades_count": per_term[subject.id],
+            }
         )
         for subject, count in rows
     ]

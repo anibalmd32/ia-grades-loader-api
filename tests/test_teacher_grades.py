@@ -76,6 +76,28 @@ async def test_mis_materias(client, school):
     body = response.json()
     assert [(s["code"], s["students_count"]) for s in body] == [("MAT-101", 3)]
     assert body[0]["semester"]["name"] == "2026-I"
+    assert body[0]["grades_count"] == {"1": 0, "2": 0, "3": 0}
+
+
+async def test_mis_materias_cuenta_notas_por_lapso(client, school):
+    ana, bea = school["students"]["Ana"], school["students"]["Bea"]
+    response = await put_grades(
+        client,
+        school,
+        [
+            {"student_id": ana, "term": 1, "value": 15},
+            {"student_id": bea, "term": 1, "value": 9.5},
+            {"student_id": ana, "term": 2, "value": 18},
+        ],
+    )
+    assert response.status_code == 200
+    body = (await client.get("/teacher/subjects", headers=school["teacher"])).json()
+    assert body[0]["grades_count"] == {"1": 2, "2": 1, "3": 0}
+
+    # Borrar una nota la descuenta
+    await put_grades(client, school, [{"student_id": ana, "term": 2, "value": None}])
+    body = (await client.get("/teacher/subjects", headers=school["teacher"])).json()
+    assert body[0]["grades_count"] == {"1": 2, "2": 0, "3": 0}
 
 
 async def test_planilla_vacia(client, school):

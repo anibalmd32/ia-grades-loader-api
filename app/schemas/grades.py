@@ -28,6 +28,10 @@ GradeNumber = Annotated[Decimal, _AsNumber]
 
 class TeacherSubject(SubjectRead):
     students_count: int
+    grades_count: dict[Term, int] = Field(
+        description="Notas cargadas en cada lapso (claves 1, 2 y 3; siempre las tres)",
+        examples=[{"1": 30, "2": 12, "3": 0}],
+    )
 
 
 class StudentSummary(BaseModel):
