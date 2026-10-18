@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # Instala uv y la versión de Python de .python-version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+      - name: Lint (ruff)
+        run: uv run ruff check .
+      - name: Formato (ruff)
+        run: uv run ruff format --check .
+      # SQLite en memoria; falla si la cobertura baja del 90 % (pyproject.toml)
+      - name: Tests y cobertura
+        run: uv run pytest --cov
+
+  # La misma suite contra MySQL real: valida CHECK, DECIMAL, ENUM, bloqueos y la ida y vuelta
+  # de todas las migraciones (conftest.py), y que modelos y migraciones coinciden
+  mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: ia_grades_loader_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      # El nombre de la base debe contener "test": la suite la vacía en cada ejecución
+      TEST_DATABASE_URL: mysql+asyncmy://root:root@127.0.0.1:3306/ia_grades_loader_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - run: uv sync --locked
+      - name: Tests contra MySQL
+        run: uv run pytest
+      # Tras la suite la base queda con todas las migraciones aplicadas
+      - name: Modelos y migraciones coinciden (alembic check)
+        run: uv run alembic check
+        env:
+          DATABASE_URL: ${{ env.TEST_DATABASE_URL }}
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build de la imagen
+        run: docker build -t ia-grades-loader-api:ci .

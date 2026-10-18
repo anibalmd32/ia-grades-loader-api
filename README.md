@@ -57,6 +57,10 @@ TEST_DATABASE_URL="mysql+asyncmy://root:CLAVE@localhost:3306/ia_grades_loader_te
 # PowerShell: $env:TEST_DATABASE_URL="mysql+asyncmy://..."; uv run pytest
 ```
 
+El CI de GitHub (`.github/workflows/ci.yml`) ejecuta en cada PR y push a `main`: ruff
+(lint y formato), la suite con cobertura en SQLite, la misma suite contra MySQL 8.4 con
+`alembic check`, y el build de la imagen Docker.
+
 Migraciones (Alembic, leen `DATABASE_URL` del `.env`):
 
 ```bash
