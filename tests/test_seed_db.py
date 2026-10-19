@@ -203,6 +203,8 @@ async def test_demo_de_evaluaciones(client, seeded):
     body = (await client.get("/student/subjects", headers=me)).json()
     by_code = {s["subject"]["code"]: s for s in body["subjects"]}
     assert by_code["MAT-102"]["grades"][0]["value"] == 18
+    notices = (await client.get("/student/notifications", headers=me)).json()
+    assert (notices["total"], notices["unread"]) == (seeded.notifications, 2)
     english = by_code["ING-101"]["evaluations"]
     assert [(e["name"], e["value"]) for e in english] == [
         ("Quiz de vocabulario", 16),

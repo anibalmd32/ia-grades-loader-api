@@ -20,7 +20,7 @@ from app.schemas.grades import (
     TermGrade,
 )
 from app.schemas.import_jobs import ImportJobRead, ImportJobSummary
-from app.services import academic, evaluations, grades, import_jobs, rules
+from app.services import academic, evaluations, grades, import_jobs, notifications, rules
 from app.services.rules import MAX_TERMS
 from app.worker import notify_new_job
 
@@ -88,6 +88,8 @@ async def save_subject_grades(
     cumple la configuración académica (422) no se guarda ninguna. Si el periodo de la
     materia está cerrado responde 409.
 
+    Cada estudiante con notas nuevas o corregidas recibe un aviso (`/student/notifications`).
+
     Si las notas salen de una importación, envía su `import_job_id` para marcarla como
     confirmada (debe ser de esta materia y estar en `done`; si no, 409).
     """
@@ -95,14 +97,17 @@ async def save_subject_grades(
     await academic.ensure_open(db, subject.semester)
     if data.import_job_id is not None:
         await import_jobs.mark_confirmed(db, teacher.id, subject.id, data.import_job_id)
-    await grades.save_grades(
+    subject_rules = await _rules_for(db, subject)
+    updates = await grades.save_grades(
         db,
         subject.id,
         [(g.student_id, g.term, g.value) for g in data.grades],
         updated_by_id=teacher.id,
-        rules=await _rules_for(db, subject),
+        rules=subject_rules,
         import_job_id=data.import_job_id,
     )
+    await notifications.notify_grade_updates(db, subject, updates, subject_rules)
+    await db.commit()
     return await _subject_grades(db, subject)
 
 

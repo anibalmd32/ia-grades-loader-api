@@ -28,8 +28,14 @@ from app.schemas.grades import (
     SubjectProjection,
     TermGrade,
 )
+from app.schemas.notifications import (
+    NotificationPage,
+    NotificationRead,
+    NotificationsRead,
+    UnreadCount,
+)
 from app.schemas.telegram import TelegramLinkInvite, TelegramStatus
-from app.services import chat, conversations, rules, student_grades
+from app.services import chat, conversations, notifications, rules, student_grades
 from app.services import telegram_link as telegram_link_service
 from app.services.student_grades import Standing, SubjectGrades
 
@@ -82,6 +88,40 @@ async def my_subject(subject_id: int, student: Student, db: DbSession) -> Studen
         db, student.id, subject_id, await rules.get_rules(db)
     )
     return _to_schema(item)
+
+
+# --- Avisos ----------------------------------------------------------------
+
+
+@router.get("/notifications", summary="Mis avisos")
+async def my_notifications(
+    student: Student,
+    db: DbSession,
+    unread_only: Annotated[bool, Query(description="Solo los no leídos")] = False,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    offset: Annotated[int, Query(ge=0)] = 0,
+) -> NotificationPage:
+    """Avisos de notas nuevas o corregidas en tus materias, del más reciente al más
+    antiguo. La app los consulta cada cierto tiempo y muestra como notificación del sistema
+    los que tienen un `id` mayor que el último que mostró."""
+    items, total, unread = await notifications.list_notifications(
+        db, student.id, unread_only=unread_only, limit=limit, offset=offset
+    )
+    return NotificationPage(
+        items=[NotificationRead.model_validate(n) for n in items],
+        total=total,
+        limit=limit,
+        offset=offset,
+        unread=unread,
+    )
+
+
+@router.post("/notifications/read", summary="Marcar avisos como leídos")
+async def read_notifications(
+    data: NotificationsRead, student: Student, db: DbSession
+) -> UnreadCount:
+    """Sin `ids` marca todos. Devuelve cuántos quedan sin leer."""
+    return UnreadCount(unread=await notifications.mark_read(db, student.id, data.ids))
 
 
 # --- Chat con el asistente ---------------------------------------------------

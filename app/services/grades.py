@@ -10,7 +10,7 @@ from sqlalchemy.orm import aliased
 
 from app.core.errors import InvalidDataError, NotFoundError
 from app.models import ChangeSource, Enrollment, Grade, GradeChange, Subject, TeacherSubject, User
-from app.services.evaluations import computed_terms
+from app.services.evaluations import GradeUpdate, computed_terms
 from app.services.rules import GradingRules
 
 
@@ -126,12 +126,13 @@ async def save_grades(
     updated_by_id: int,
     rules: GradingRules,
     import_job_id: str | None = None,
-) -> None:
+) -> list[GradeUpdate]:
     """Crea, modifica o borra (valor None) notas de (estudiante, lapso, valor).
 
     Todo o nada: si algún estudiante no está matriculado o alguna nota no cumple la
     configuración académica no se guarda ninguna. Cada cambio efectivo queda en el
-    historial (grade_changes) con su autor y su origen (a mano o importación).
+    historial (grade_changes) con su autor y su origen (a mano o importación) y se devuelve
+    (para avisar a los estudiantes).
     """
     validate_entries(entries, rules)
     computed = await computed_terms(db, subject_id)
@@ -164,6 +165,7 @@ async def save_grades(
         )
     }
     source = ChangeSource.MANUAL if import_job_id is None else ChangeSource.IMPORT
+    updates = []
     for student_id, term, value in entries:
         enrollment_id = enrollment_by_student[student_id]
         grade = existing.get((enrollment_id, term))
@@ -192,7 +194,9 @@ async def save_grades(
                     import_job_id=import_job_id,
                 )
             )
+            updates.append(GradeUpdate(student_id, term, None, value))
     await db.commit()
+    return updates
 
 
 async def history(

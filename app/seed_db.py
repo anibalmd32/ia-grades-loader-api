@@ -18,7 +18,8 @@ Crea una universidad de ejemplo lista para enseñar todas las pantallas:
   Inglés Técnico el lapso 2 va por la mitad (falta el examen).
 - Importaciones de Excel del profesor de ejemplo: una confirmada, una pendiente de revisar
   (con avisos y errores) y una fallida.
-- Conversaciones del estudiante de ejemplo con el asistente.
+- Conversaciones del estudiante de ejemplo con el asistente y avisos de notas nuevas (dos
+  sin leer).
 
 Los datos son siempre los mismos (semilla fija), así que la demo es reproducible.
 """
@@ -55,6 +56,7 @@ from app.models import (
     JobStatus,
     MessageRole,
     Nationality,
+    Notification,
     PeriodType,
     Role,
     Semester,
@@ -161,6 +163,7 @@ class SeedSummary:
     enrollments: int = 0
     grades: int = 0
     evaluations: int = 0
+    notifications: int = 0
     import_jobs: int = 0
     grade_changes: int = 0
     conversations: int = 0
@@ -574,6 +577,29 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
     db.add_all(changes)
     summary.grade_changes = len(changes)
 
+    # --- Avisos de notas de la estudiante de ejemplo (los dos últimos sin leer) -------
+    notices = [
+        ("MAT-102", "Nueva nota en Matemática II", "Lapso 2: 19", 12),
+        ("FIS-102", "Nueva nota en Física II", "Lapso 2: 10.5", 9),
+        ("ING-101", "Nueva nota en Inglés Técnico", "Quiz de vocabulario (Lapso 2): 16", 18),
+        ("ING-101", "Nueva nota en Inglés Técnico", "Exposición (Lapso 2): 15", 4),
+        ("PRO-102", "Nueva nota en Programación II", "Lapso 3: 18", 2),
+    ]
+    notices.sort(key=lambda n: -n[3])
+    for position, (code, title, body, days_ago) in enumerate(notices):
+        when = now - timedelta(days=days_ago, hours=3)
+        db.add(
+            Notification(
+                user_id=demo.id,
+                subject_id=subjects[code].id,
+                title=title,
+                body=body,
+                created_at=when,
+                read_at=None if position >= len(notices) - 2 else when + timedelta(hours=2),
+            )
+        )
+    summary.notifications = len(notices)
+
     # --- Conversaciones con el asistente ---------------------------------------
     chats = [
         (
@@ -631,7 +657,7 @@ def print_summary(summary: SeedSummary) -> None:
     print(
         f"  {summary.students} estudiantes, {summary.subjects} materias, "
         f"{summary.enrollments} matrículas, {summary.grades} notas, "
-        f"{summary.evaluations} evaluaciones "
+        f"{summary.evaluations} evaluaciones, {summary.notifications} avisos "
         f"({summary.grade_changes} cambios en el historial), "
         f"{summary.import_jobs} importaciones, {summary.conversations} conversaciones"
     )

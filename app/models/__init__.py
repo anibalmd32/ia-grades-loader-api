@@ -7,6 +7,7 @@ from app.models.evaluation import Evaluation, EvaluationGrade
 from app.models.grade_change import ChangeSource, GradeChange
 from app.models.import_job import ImportJob, JobStatus
 from app.models.installation import Installation
+from app.models.notification import Notification
 from app.models.revoked_token import RevokedToken
 from app.models.settings import AcademicSettings, PeriodType
 from app.models.telegram_link import TelegramLinkCode
@@ -29,6 +30,7 @@ __all__ = [
     "JobStatus",
     "MessageRole",
     "Nationality",
+    "Notification",
     "PeriodType",
     "RevokedToken",
     "Role",

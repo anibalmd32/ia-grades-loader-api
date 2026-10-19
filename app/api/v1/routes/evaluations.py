@@ -21,7 +21,7 @@ from app.schemas.evaluations import (
     TermPlan,
 )
 from app.schemas.grades import StudentSummary
-from app.services import academic, evaluations, grades, rules
+from app.services import academic, evaluations, grades, notifications, rules
 from app.services.rules import MAX_TERMS
 
 router = APIRouter(prefix="/teacher/subjects/{subject_id}", tags=["Profesor: evaluaciones"])
@@ -40,6 +40,12 @@ async def _checked_rules(db: DbSession, subject: Subject, term: int) -> rules.Gr
     if problem := subject_rules.term_error(term):
         raise InvalidDataError(problem)
     return subject_rules
+
+
+async def _notify(db: DbSession, subject: Subject, updates, subject_rules) -> None:
+    """Avisa a los estudiantes de sus notas nuevas o corregidas."""
+    if await notifications.notify_grade_updates(db, subject, updates, subject_rules):
+        await db.commit()
 
 
 def _read(evaluation: Evaluation, graded: int) -> EvaluationRead:
@@ -114,9 +120,11 @@ async def update_evaluation(
     evaluation = await evaluations.get_evaluation(db, subject.id, evaluation_id)
     changes = data.model_dump(exclude_unset=True)
     changes = {k: v for k, v in changes.items() if v is not None or k == "due_date"}
-    await evaluations.update_evaluation(
-        db, evaluation, await _rules_for(db, subject), changes, teacher.id
+    subject_rules = await _rules_for(db, subject)
+    updates = await evaluations.update_evaluation(
+        db, evaluation, subject_rules, changes, teacher.id
     )
+    await _notify(db, subject, updates, subject_rules)
     return _read(evaluation, (await _graded_counts(db, subject.id)).get(evaluation.id, 0))
 
 
@@ -133,7 +141,9 @@ async def delete_evaluation(
     subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
     await academic.ensure_open(db, subject.semester)
     evaluation = await evaluations.get_evaluation(db, subject.id, evaluation_id)
-    await evaluations.delete_evaluation(db, evaluation, await _rules_for(db, subject), teacher.id)
+    subject_rules = await _rules_for(db, subject)
+    updates = await evaluations.delete_evaluation(db, evaluation, subject_rules, teacher.id)
+    await _notify(db, subject, updates, subject_rules)
 
 
 async def _term_grades(db: DbSession, subject: Subject, term: int) -> TermEvaluationGrades:
@@ -170,11 +180,12 @@ async def save_term_evaluation_grades(
 ) -> TermEvaluationGrades:
     """Envía solo las notas que cambian (`value: null` borra). Todo o nada: 404 si una
     evaluación no es de ese lapso o un estudiante no está matriculado, 422 si una nota no
-    cumple la escala y 409 si el periodo está cerrado. La nota del lapso se recalcula."""
+    cumple la escala y 409 si el periodo está cerrado. La nota del lapso se recalcula y cada
+    estudiante con notas nuevas recibe un aviso."""
     subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
     await academic.ensure_open(db, subject.semester)
     subject_rules = await _checked_rules(db, subject, term)
-    await evaluations.save_evaluation_grades(
+    updates = await evaluations.save_evaluation_grades(
         db,
         subject.id,
         term,
@@ -182,4 +193,5 @@ async def save_term_evaluation_grades(
         updated_by_id=teacher.id,
         rules=subject_rules,
     )
+    await _notify(db, subject, updates, subject_rules)
     return await _term_grades(db, subject, term)

@@ -11,7 +11,9 @@ API para la carga y consulta de notas universitarias asistida por IA.
   escala de notas, nota aprobatoria, decimales y redondeo de la definitiva
   (`GET/PUT /api/v1/settings/academic`). Por defecto: semestres de 3 lapsos que pesan igual,
   notas del 1 al 20 y se aprueba con 10.
-- Los estudiantes consultan sus notas de forma tradicional, en lenguaje natural o por Telegram.
+- Los estudiantes consultan sus notas de forma tradicional, en lenguaje natural o por Telegram, y
+  reciben un aviso cada vez que se les carga o corrige una nota (`/api/v1/student/notifications`;
+  la app lo muestra como notificación del sistema).
 
 La especificación completa, la documentación técnica y el tablero de tareas están en Notion:
 [Cargador de notas universitarios](https://app.notion.com/p/bluecode32/Cargador-de-notas-universitarios-3f7bc59f43f78088badbffa4180dce10).
