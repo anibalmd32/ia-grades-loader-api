@@ -6,7 +6,7 @@ elegido por el usuario o por la IA.
 """
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import StrEnum
 
@@ -14,7 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
-from app.models import Enrollment, Grade, Semester, Subject, TeacherSubject, User
+from app.models import Enrollment, Evaluation, Grade, Semester, Subject, TeacherSubject, User
+from app.services.evaluations import student_evaluations
 from app.services.rules import GradingRules, for_semester
 
 
@@ -58,6 +59,8 @@ class SubjectGrades:
     teachers: list[str]
     grades: dict[int, Decimal | None]  # lapso -> nota
     rules: GradingRules
+    # Plan de evaluación de la materia con la nota del estudiante en cada evaluación
+    evaluations: list[tuple[Evaluation, Decimal | None]] = field(default_factory=list)
 
     @property
     def average(self) -> Decimal | None:
@@ -107,6 +110,8 @@ async def student_subjects(
     for sid, name in rows:
         teachers[sid].append(name)
 
+    plans = await student_evaluations(db, [e for e, _ in enrollments])
+
     result = []
     for enrollment_id, subject in enrollments:
         subject_rules = for_semester(rules, subject.semester)
@@ -116,6 +121,7 @@ async def student_subjects(
                 teachers=teachers[subject.id],
                 grades={t: grades[enrollment_id].get(t) for t in subject_rules.terms},
                 rules=subject_rules,
+                evaluations=plans.get(enrollment_id, []),
             )
         )
     return result

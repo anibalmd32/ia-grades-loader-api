@@ -103,6 +103,10 @@ Reglas académicas:
 - Cada {rules.period_label.lower()} se divide en {rules.terms_count} {terms}; \
 {rules.weights_text}.
 - {rules.final_grade_text}.
+- Un {term} puede tener un plan de evaluación (exámenes, talleres...) con el porcentaje de cada
+  evaluación: entonces su nota es la suma de cada nota por su porcentaje y solo aparece cuando
+  el plan suma 100 % y todas las evaluaciones tienen nota. Mientras tanto puedes decirle cuánto
+  lleva acumulado (ya calculado) y qué evaluaciones le faltan.
 
 Cómo responder:
 - Consulta siempre sus notas reales antes de responder; no inventes notas ni datos.

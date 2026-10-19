@@ -278,3 +278,22 @@ def test_identifica_por_nombre_en_cualquier_orden():
         row = PreviewRow(extracted=ExtractedGrade(student_name=name))
         roster.match(row)
         assert row.student is ana, name
+
+
+async def test_no_importa_lapsos_con_plan_de_evaluacion(client, course, use_llm, sessionmaker):
+    await client.post(
+        f"/teacher/subjects/{course['subject_id']}/evaluations",
+        json={"term": 2, "name": "Examen", "weight": 100},
+        headers=course["headers"],
+    )
+    fake = use_llm(
+        {
+            "grades": [
+                entry(cedula="V-1", term=1, value=15),
+                entry(row=3, cedula="V-2", term=2, value=12),
+            ]
+        }
+    )
+    rows = await preview_rows(client, course, sessionmaker, fake)
+    assert [r["status"] for r in rows] == ["ok", "error"]
+    assert "plan de evaluación" in rows[1]["issues"][0]

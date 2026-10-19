@@ -13,7 +13,17 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
-from app.models import AcademicSettings, Enrollment, Grade, PeriodType, Semester, Subject, User
+from app.models import (
+    AcademicSettings,
+    Enrollment,
+    Evaluation,
+    EvaluationGrade,
+    Grade,
+    PeriodType,
+    Semester,
+    Subject,
+    User,
+)
 from app.models.settings import SETTINGS_ID
 
 # Límites de lo configurable (también los usa la validación de entrada)
@@ -279,9 +289,28 @@ def _grades_following_current_rules():
     )
 
 
+def _evaluations_following_current_rules():
+    return (
+        select(Evaluation)
+        .join(Subject, Subject.id == Evaluation.subject_id)
+        .join(Semester, Semester.id == Subject.semester_id)
+        .where(Semester.rules.is_(None))
+    )
+
+
+def _evaluation_grades_following_current_rules():
+    return (
+        select(EvaluationGrade)
+        .join(Evaluation, Evaluation.id == EvaluationGrade.evaluation_id)
+        .join(Subject, Subject.id == Evaluation.subject_id)
+        .join(Semester, Semester.id == Subject.semester_id)
+        .where(Semester.rules.is_(None))
+    )
+
+
 async def _check_existing_grades(db: AsyncSession, new: GradingRules) -> None:
-    """Las notas ya cargadas tienen que seguir siendo válidas con las reglas nuevas (salvo
-    las de periodos con reglas congeladas, que no cambian)."""
+    """Las notas ya cargadas (de los lapsos y de las evaluaciones) tienen que seguir siendo
+    válidas con las reglas nuevas (salvo las de periodos con reglas congeladas)."""
     label = new.term_label_plural.lower()
     affected = _grades_following_current_rules().subquery()
     out_of_terms = await db.scalar(
@@ -292,6 +321,21 @@ async def _check_existing_grades(db: AsyncSession, new: GradingRules) -> None:
             f"Hay {out_of_terms} notas cargadas en {label} posteriores al {new.terms_count}. "
             f"Bórralas antes de reducir el número de {label}."
         )
+    plans = _evaluations_following_current_rules().subquery()
+    planned = await db.scalar(
+        select(func.count()).select_from(plans).where(plans.c.term > new.terms_count)
+    )
+    if planned:
+        raise ConflictError(
+            f"Hay {planned} evaluaciones en {label} posteriores al {new.terms_count}. "
+            f"Bórralas antes de reducir el número de {label}."
+        )
+    evaluation_grades = _evaluation_grades_following_current_rules().subquery()
+    for values in (affected, evaluation_grades):
+        await _check_scale(db, values, new)
+
+
+async def _check_scale(db: AsyncSession, affected, new: GradingRules) -> None:
     out_of_scale = await db.scalar(
         select(func.count())
         .select_from(affected)

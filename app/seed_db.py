@@ -14,6 +14,8 @@ Crea una universidad de ejemplo lista para enseñar todas las pantallas:
   curso (notas parciales).
 - Asignaciones de profesores, matrículas y notas con todas las situaciones posibles
   (aprobada, reprobada, asegurada, en curso e imposible), con su historial de cambios.
+- Planes de evaluación: en Matemática II el lapso 1 se calcula con sus evaluaciones y en
+  Inglés Técnico el lapso 2 va por la mitad (falta el examen).
 - Importaciones de Excel del profesor de ejemplo: una confirmada, una pendiente de revisar
   (con avisos y errores) y una fallida.
 - Conversaciones del estudiante de ejemplo con el asistente.
@@ -26,8 +28,8 @@ import asyncio
 import random
 import sys
 from dataclasses import dataclass, field
-from datetime import timedelta
-from decimal import Decimal
+from datetime import datetime, time, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import exists, select
 from sqlalchemy.engine import make_url
@@ -44,6 +46,8 @@ from app.models import (
     Conversation,
     ConversationMessage,
     Enrollment,
+    Evaluation,
+    EvaluationGrade,
     Grade,
     GradeChange,
     ImportJob,
@@ -118,6 +122,16 @@ DEMO_STUDENT_GRADES = {
     "ING-101": [14, None, None],  # en curso
 }
 
+# Planes de evaluación (materia, lapso): nombre, porcentaje y hace cuántos días fue (negativo
+# = aún no ha llegado). En MAT-102 el lapso 1 ya está calificado y su nota sale del plan; en
+# ING-101 el lapso 2 va por la mitad (falta el examen).
+EVALUATION_PLANS = {
+    ("MAT-102", 1): [("Parcial 1", 40, 75), ("Taller de derivadas", 30, 68), ("Quiz", 30, 62)],
+    ("ING-101", 2): [("Quiz de vocabulario", 20, 20), ("Exposición", 30, 6), ("Examen", 50, -9)],
+}
+# Notas de Valentina en esas evaluaciones (None = aún sin nota)
+DEMO_EVALUATION_GRADES = {("MAT-102", 1): [18, 17, 19], ("ING-101", 2): [16, 15, None]}
+
 FIRST_NAMES = [
     "Andrés", "Camila", "Daniel", "Sofía", "Gabriel", "Isabella", "Miguel", "Lucía",
     "Santiago", "Mariana", "Alejandro", "Daniela", "Diego", "Paola", "Jesús", "Andrea",
@@ -146,6 +160,7 @@ class SeedSummary:
     subjects: int = 0
     enrollments: int = 0
     grades: int = 0
+    evaluations: int = 0
     import_jobs: int = 0
     grade_changes: int = 0
     conversations: int = 0
@@ -302,6 +317,80 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
                         pending_grades.append((enrollment, term, value, teacher_of[code]))
     await db.flush()
     summary.enrollments = len(enrollment_of)
+
+    # --- Planes de evaluación -----------------------------------------------------
+    evaluation_changes: list[GradeChange] = []
+    for (code, term), plan in EVALUATION_PLANS.items():
+        evaluations = [
+            Evaluation(
+                subject_id=subjects[code].id,
+                term=term,
+                name=name,
+                weight=Decimal(weight),
+                due_date=(now - timedelta(days=days_ago)).date(),
+            )
+            for name, weight, days_ago in plan
+        ]
+        db.add_all(evaluations)
+        await db.flush()
+        summary.evaluations += len(evaluations)
+        teacher = teacher_of[code]
+        for student in students:
+            enrollment = enrollment_of.get((student.id, code))
+            if enrollment is None:
+                continue
+            index = next(
+                (i for i, g in enumerate(pending_grades) if g[0] is enrollment and g[1] == term),
+                None,
+            )
+            if student is demo:
+                values = [
+                    None if v is None else Decimal(str(v))
+                    for v in DEMO_EVALUATION_GRADES[(code, term)]
+                ]
+            else:
+                center = float(pending_grades[index][2]) if index is not None else 13.0
+                values = [_grade(rng, center) if days_ago > 0 else None for _, _, days_ago in plan]
+            for evaluation, value in zip(evaluations, values, strict=True):
+                if value is None:
+                    continue
+                db.add(
+                    EvaluationGrade(
+                        evaluation_id=evaluation.id,
+                        enrollment_id=enrollment.id,
+                        value=value,
+                        updated_by_id=teacher.id,
+                    )
+                )
+                evaluation_changes.append(
+                    GradeChange(
+                        enrollment_id=enrollment.id,
+                        term=term,
+                        evaluation_name=evaluation.name,
+                        old_value=None,
+                        new_value=value,
+                        changed_by_id=teacher.id,
+                        source=ChangeSource.MANUAL,
+                        created_at=datetime.combine(evaluation.due_date, time(15))
+                        + timedelta(days=2, minutes=rng.randint(0, 300)),
+                    )
+                )
+            # Nota del lapso: la que sale del plan (o ninguna si falta alguna evaluación)
+            computed = (
+                None
+                if any(v is None for v in values)
+                else (
+                    sum(
+                        (v * e.weight for v, e in zip(values, evaluations, strict=True)), Decimal(0)
+                    )
+                    / 100
+                ).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            )
+            if index is not None:
+                pending_grades.pop(index)
+            if computed is not None:
+                pending_grades.append((enrollment, term, computed, teacher))
+
     for enrollment, term, value, teacher in pending_grades:
         db.add(Grade(enrollment_id=enrollment.id, term=term, value=value, updated_by_id=teacher.id))
     summary.grades = len(pending_grades)
@@ -443,13 +532,18 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
     semester_of_subject = {
         s.id: name for name, items in SUBJECTS.items() for s in (subjects[c] for c, _ in items)
     }
-    changes = []
+    planned = {(subjects[code].id, term) for code, term in EVALUATION_PLANS}
+    changes = list(evaluation_changes)
     for enrollment, term, value, teacher in pending_grades:
         when = now - timedelta(
             days=loaded_days_ago[semester_of_subject[enrollment.subject_id]][term],
             minutes=rng.randint(0, 600),
         )
         from_import = enrollment.subject_id == mat102.id and term == 2
+        if (enrollment.subject_id, term) in planned:
+            source = ChangeSource.EVALUATIONS
+        else:
+            source = ChangeSource.IMPORT if from_import else ChangeSource.MANUAL
         changes.append(
             GradeChange(
                 enrollment_id=enrollment.id,
@@ -457,7 +551,7 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
                 old_value=None,
                 new_value=value,
                 changed_by_id=teacher.id,
-                source=ChangeSource.IMPORT if from_import else ChangeSource.MANUAL,
+                source=source,
                 import_job_id=confirmed_job.id if from_import else None,
                 created_at=confirmed_job.confirmed_at if from_import else when,
             )
@@ -536,7 +630,8 @@ def print_summary(summary: SeedSummary) -> None:
     print("Datos de demostración cargados:")
     print(
         f"  {summary.students} estudiantes, {summary.subjects} materias, "
-        f"{summary.enrollments} matrículas, {summary.grades} notas "
+        f"{summary.enrollments} matrículas, {summary.grades} notas, "
+        f"{summary.evaluations} evaluaciones "
         f"({summary.grade_changes} cambios en el historial), "
         f"{summary.import_jobs} importaciones, {summary.conversations} conversaciones"
     )

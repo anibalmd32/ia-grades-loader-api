@@ -3,7 +3,9 @@
 API para la carga y consulta de notas universitarias asistida por IA.
 
 - Los profesores cargan las notas (una por lapso), manualmente o desde un Excel que un modelo de
-  IA interpreta.
+  IA interpreta. Cada lapso puede tener además un **plan de evaluación** que define el profesor
+  (exámenes, talleres... con su porcentaje): entonces la nota del lapso se calcula sola a partir
+  de las notas de esas evaluaciones (`/api/v1/teacher/subjects/{id}/evaluations`).
 - El super admin configura las reglas académicas: tipo de periodo (semestres, trimestres,
   cuatrimestres o años), número de lapsos y su nombre ("Lapso", "Corte"...), peso de cada lapso,
   escala de notas, nota aprobatoria, decimales y redondeo de la definitiva

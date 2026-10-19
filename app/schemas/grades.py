@@ -1,4 +1,4 @@
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -80,6 +80,11 @@ class StudentGrades(BaseModel):
 
 class SubjectGrades(BaseModel):
     subject: SubjectRead
+    computed_terms: list[int] = Field(
+        default_factory=list,
+        description="Lapsos con plan de evaluación: su nota se calcula con las evaluaciones y "
+        "no se carga directamente (PUT /grades responde 422)",
+    )
     students: list[StudentGrades]
 
 
@@ -155,10 +160,25 @@ class SubjectProjection(BaseModel):
     )
 
 
+class StudentEvaluation(BaseModel):
+    """Una evaluación vista por el estudiante, con su nota."""
+
+    term: int
+    name: str
+    weight: GradeNumber = Field(description="Porcentaje de la nota del lapso")
+    due_date: date | None
+    value: GradeNumber | None = Field(description="null si aún no se ha calificado")
+
+
 class StudentSubjectGrades(BaseModel):
     subject: SubjectRead
     teachers: list[str] = Field(description="Profesores que imparten la materia")
     grades: list[TermGrade] = Field(description="Siempre un elemento por lapso, en orden")
+    evaluations: list[StudentEvaluation] = Field(
+        default_factory=list,
+        description="Plan de evaluación de la materia (por lapso) con la nota de cada una. Los "
+        "lapsos con evaluaciones calculan su nota a partir de ellas",
+    )
     average: GradeNumber | None = Field(description="Promedio de las notas cargadas")
     projection: SubjectProjection
 
@@ -190,10 +210,16 @@ class GradeChangeRead(BaseModel):
     id: int
     student: StudentSummary
     term: int
+    evaluation_name: str | None = Field(
+        description="Evaluación cuya nota cambió; null = la nota del lapso"
+    )
     old_value: GradeNumber | None = Field(description="Nota anterior; null = no tenía nota")
     new_value: GradeNumber | None = Field(description="Nota nueva; null = se borró")
     changed_by: str | None = Field(description="Quién hizo el cambio (null si ya no existe)")
-    source: ChangeSource = Field(description="manual = en la planilla; import = desde un Excel")
+    source: ChangeSource = Field(
+        description="manual = en la planilla; import = desde un Excel; evaluations = nota del "
+        "lapso calculada con sus evaluaciones"
+    )
     import_job_id: str | None
     created_at: UtcDatetime
 
@@ -203,6 +229,7 @@ class GradeChangeRead(BaseModel):
             id=change.id,
             student=StudentSummary.model_validate(student),
             term=change.term,
+            evaluation_name=change.evaluation_name,
             old_value=change.old_value,
             new_value=change.new_value,
             changed_by=changed_by,

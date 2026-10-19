@@ -10,6 +10,7 @@ from sqlalchemy.orm import aliased
 
 from app.core.errors import InvalidDataError, NotFoundError
 from app.models import ChangeSource, Enrollment, Grade, GradeChange, Subject, TeacherSubject, User
+from app.services.evaluations import computed_terms
 from app.services.rules import GradingRules
 
 
@@ -133,6 +134,13 @@ async def save_grades(
     historial (grade_changes) con su autor y su origen (a mano o importación).
     """
     validate_entries(entries, rules)
+    computed = await computed_terms(db, subject_id)
+    if blocked := sorted({term for _, term, _ in entries if term in computed}):
+        names = ", ".join(rules.term_name(t).lower() for t in blocked)
+        raise InvalidDataError(
+            f"La nota del {names} se calcula con su plan de evaluación: carga las notas de "
+            "cada evaluación"
+        )
     student_ids = {student_id for student_id, _, _ in entries}
     enrollment_by_student = dict(
         (

@@ -8,7 +8,7 @@ from sqlalchemy.pool import NullPool
 from app import reset_db, seed_db
 from app.core.config import get_settings
 from app.db.base import Base
-from app.models import Enrollment, Grade, ImportJob, Installation, Role, User
+from app.models import Enrollment, EvaluationGrade, Grade, ImportJob, Installation, Role, User
 from app.seed_db import DEFAULT_PASSWORD, NotEmptyError, seed
 
 
@@ -159,8 +159,10 @@ async def test_reset_con_seed(database, monkeypatch):
     assert await asyncio.to_thread(reset_db.main, ["--yes", "--seed"]) == 0
 
 
-async def test_historial_de_notas_de_demo(client, seeded):
-    assert seeded.grade_changes == seeded.grades + 1
+async def test_historial_de_notas_de_demo(client, seeded, session):
+    evaluation_grades = await session.scalar(select(func.count()).select_from(EvaluationGrade))
+    # Una alta por nota (de lapso y de evaluación) y la corrección de Física II
+    assert seeded.grade_changes == seeded.grades + evaluation_grades + 1
     headers = await login(client, email="luis.fernandez@demo.edu")
     fis102 = next(
         s
@@ -180,4 +182,30 @@ async def test_historial_de_notas_de_demo(client, seeded):
         (9.5, 10.5),
         (None, 9.5),
         (None, 9),
+    ]
+
+
+async def test_demo_de_evaluaciones(client, seeded):
+    assert seeded.evaluations == 6
+    headers = await login(client, email="profesor@demo.edu")
+    subjects = (await client.get("/teacher/subjects", headers=headers)).json()
+    mat102 = next(s for s in subjects if s["code"] == "MAT-102")
+    plan = await client.get(f"/teacher/subjects/{mat102['id']}/evaluations", headers=headers)
+    assert [t["complete"] for t in plan.json()["terms"]] == [True, False, False]
+    sheet = (
+        await client.get(
+            f"/teacher/subjects/{mat102['id']}/terms/1/evaluation-grades", headers=headers
+        )
+    ).json()
+    assert all(s["term_grade"] is not None for s in sheet["students"])
+
+    me = await login(client, nationality="V", cedula=12345678)
+    body = (await client.get("/student/subjects", headers=me)).json()
+    by_code = {s["subject"]["code"]: s for s in body["subjects"]}
+    assert by_code["MAT-102"]["grades"][0]["value"] == 18
+    english = by_code["ING-101"]["evaluations"]
+    assert [(e["name"], e["value"]) for e in english] == [
+        ("Quiz de vocabulario", 16),
+        ("Exposición", 15),
+        ("Examen", None),
     ]

@@ -47,6 +47,34 @@ def _situation(item: SubjectGrades) -> dict[str, Any]:
     }
 
 
+def _evaluations(item: SubjectGrades) -> dict[str, Any]:
+    """Plan de evaluación por lapso, con lo acumulado (calculado aquí, no por el modelo)."""
+    rules = item.rules
+    by_term: dict[int, list] = {}
+    for evaluation, value in item.evaluations:
+        by_term.setdefault(evaluation.term, []).append((evaluation, value))
+    result = {}
+    for term, plan in by_term.items():
+        graded = [(e.weight, v) for e, v in plan if v is not None]
+        accumulated = (
+            rules.quantize(sum((w * v for w, v in graded), Decimal(0)) / 100) if graded else None
+        )
+        result[rules.term_name(term)] = {
+            "evaluaciones": [
+                {
+                    "nombre": e.name,
+                    "porcentaje": _number(e.weight),
+                    "fecha": None if e.due_date is None else e.due_date.isoformat(),
+                    "nota": _number(v),
+                }
+                for e, v in plan
+            ],
+            "porcentaje_planificado": _number(sum((e.weight for e, _ in plan), Decimal(0))),
+            "puntos_acumulados": _number(accumulated),
+        }
+    return result
+
+
 def _subject_dict(item: SubjectGrades) -> dict[str, Any]:
     rules = item.rules
     return {
@@ -56,6 +84,8 @@ def _subject_dict(item: SubjectGrades) -> dict[str, Any]:
         "profesores": item.teachers,
         "notas": {rules.term_name(term): _number(value) for term, value in item.grades.items()},
         "promedio_actual": _number(item.average),
+        # Solo los lapsos con plan de evaluación (su nota sale de las evaluaciones)
+        "planes_de_evaluacion": _evaluations(item),
         # Calculada por el servidor: el modelo debe usar este dato, no hacer la cuenta
         "situacion": _situation(item),
         # Un periodo cerrado conserva las reglas con que se evaluó
@@ -157,7 +187,9 @@ TOOLS: dict[str, StudentTool] = {
         StudentTool(
             name="resumen_de_notas",
             description="Devuelve todas las materias del estudiante con su nota de cada "
-            "lapso (null si aún no se ha cargado), el promedio actual de cada materia, su "
+            "lapso (null si aún no se ha cargado), el plan de evaluación de los lapsos que lo "
+            "tienen (cada evaluación con su porcentaje, fecha y nota, y los puntos acumulados), "
+            "el promedio actual de cada materia, su "
             "situación (aprobada, reprobada, en curso, asegurada o imposible y la nota mínima "
             "necesaria en los lapsos sin nota), el promedio general y las reglas de evaluación.",
             args=NoArgs,
@@ -165,7 +197,8 @@ TOOLS: dict[str, StudentTool] = {
         ),
         StudentTool(
             name="notas_de_materia",
-            description="Devuelve las notas por lapso, el promedio actual, la situación y los "
+            description="Devuelve las notas por lapso, el plan de evaluación (evaluaciones con "
+            "porcentaje, fecha y nota), el promedio actual, la situación y los "
             "profesores de una materia concreta del estudiante, buscándola por nombre o código.",
             args=SubjectArgs,
             handler=notas_de_materia,

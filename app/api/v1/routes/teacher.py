@@ -20,7 +20,7 @@ from app.schemas.grades import (
     TermGrade,
 )
 from app.schemas.import_jobs import ImportJobRead, ImportJobSummary
-from app.services import academic, grades, import_jobs, rules
+from app.services import academic, evaluations, grades, import_jobs, rules
 from app.services.rules import MAX_TERMS
 from app.worker import notify_new_job
 
@@ -37,6 +37,7 @@ async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
     roster = await grades.subject_roster(db, subject.id, await _rules_for(db, subject))
     return SubjectGrades(
         subject=SubjectRead.model_validate(subject),
+        computed_terms=sorted(await evaluations.computed_terms(db, subject.id)),
         students=[
             StudentGrades(
                 student=StudentSummary.model_validate(row.student),

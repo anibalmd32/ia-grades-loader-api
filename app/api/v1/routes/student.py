@@ -22,6 +22,7 @@ from app.schemas.chat import (
 from app.schemas.common import Page
 from app.schemas.grades import (
     SemesterAverage,
+    StudentEvaluation,
     StudentOverview,
     StudentSubjectGrades,
     SubjectProjection,
@@ -42,6 +43,12 @@ def _to_schema(item: SubjectGrades) -> StudentSubjectGrades:
         subject=SubjectRead.model_validate(item.subject),
         teachers=item.teachers,
         grades=[TermGrade(term=t, value=v) for t, v in item.grades.items()],
+        evaluations=[
+            StudentEvaluation(
+                term=e.term, name=e.name, weight=e.weight, due_date=e.due_date, value=value
+            )
+            for e, value in item.evaluations
+        ],
         average=item.average,
         projection=SubjectProjection.model_validate(item.projection, from_attributes=True),
     )

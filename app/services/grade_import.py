@@ -21,7 +21,7 @@ from app.ai.prompts import grades_extraction_system, grades_extraction_user
 from app.models import Subject, User
 from app.schemas.academic import SubjectRead
 from app.schemas.grades import ImportPreview, ImportRow, ImportSummary, StudentSummary
-from app.services import excel, grades
+from app.services import evaluations, excel, grades
 from app.services import rules as rules_service
 from app.services.rules import GradingRules
 
@@ -130,6 +130,8 @@ def parse_value(raw: float | int | str | None, rules: GradingRules) -> tuple[Dec
 class _Roster:
     def __init__(self, rows: list[grades.StudentRow]):
         self.rows = rows
+        # Lapsos con plan de evaluación: su nota no se importa, se calcula
+        self.computed_terms: set[int] = set()
         self.by_number: dict[int, list[User]] = {}
         self.by_name: dict[str, list[User]] = {}
         for row in rows:
@@ -215,6 +217,13 @@ def _validate(row: PreviewRow, roster: _Roster, rules: GradingRules) -> None:
             f"({rules.grade_decimals} decimales como máximo)",
         )
 
+    if row.term in roster.computed_terms:
+        row.flag(
+            "error",
+            f"La nota del {rules.term_name(row.term).lower()} se calcula con su plan de "
+            "evaluación: no se puede importar",
+        )
+
     if row.extracted.note:
         row.issues.append(f"Observación de la IA: {row.extracted.note}")
 
@@ -257,6 +266,7 @@ async def preview_import(
     )
 
     roster = _Roster(await grades.subject_roster(db, subject.id, rules))
+    roster.computed_terms = await evaluations.computed_terms(db, subject.id)
     rows = []
     for extracted in extraction.grades:
         if extracted.term is None and default_term:

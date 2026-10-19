@@ -12,6 +12,7 @@ from app.models.import_job import utcnow
 class ChangeSource(StrEnum):
     MANUAL = "manual"  # cargada o corregida a mano en la planilla
     IMPORT = "import"  # confirmada desde una importación de Excel
+    EVALUATIONS = "evaluations"  # nota del lapso calculada a partir de sus evaluaciones
 
 
 class GradeChange(Base):
@@ -25,6 +26,9 @@ class GradeChange(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     enrollment_id: Mapped[int] = mapped_column(ForeignKey("enrollments.id", ondelete="CASCADE"))
     term: Mapped[int] = mapped_column(SmallInteger)
+    # Nombre de la evaluación si el cambio es de una nota de evaluación; null = nota del lapso.
+    # Se guarda el nombre (no el id) para que el historial se entienda aunque se borre.
+    evaluation_name: Mapped[str | None] = mapped_column(String(100))
     # null en old_value = nota nueva; null en new_value = nota borrada
     old_value: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     new_value: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
