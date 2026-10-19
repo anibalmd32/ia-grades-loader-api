@@ -1,16 +1,22 @@
 """Consulta de notas por el estudiante autenticado."""
 
+import asyncio
+import json
+import time
 from collections.abc import AsyncIterator
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, status
-from fastapi.sse import EventSourceResponse, ServerSentEvent
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import StreamingResponse
+from fastapi.sse import EventSourceResponse, ServerSentEvent, format_sse_event
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import LLMClient, get_llm
-from app.api.deps import DbSession, require_roles
+from app.api.deps import DbSession, oauth2_scheme, require_roles
 from app.core.config import get_settings
 from app.core.errors import AppError
 from app.core.rate_limit import RateLimitedError
+from app.db.session import get_db
 from app.models import ChatChannel, Conversation, Role, User
 from app.schemas.academic import SemesterRead, SubjectRead
 from app.schemas.chat import (
@@ -35,8 +41,10 @@ from app.schemas.notifications import (
     UnreadCount,
 )
 from app.schemas.telegram import TelegramLinkInvite, TelegramStatus
+from app.services import auth as auth_service
 from app.services import chat, conversations, notifications, rules, student_grades
 from app.services import telegram_link as telegram_link_service
+from app.services.notification_stream import broker
 from app.services.student_grades import Standing, SubjectGrades
 
 router = APIRouter(prefix="/student", tags=["Estudiante"])
@@ -113,6 +121,71 @@ async def my_notifications(
         limit=limit,
         offset=offset,
         unread=unread,
+    )
+
+
+# Ping para que proxies y navegadores no corten la conexión por inactividad, y duración
+# máxima: la app vuelve a conectar sola (y así se revalida la sesión)
+STREAM_PING_SECONDS = 20.0
+STREAM_MAX_SECONDS = 30 * 60.0
+
+
+async def _stream_student(
+    db: Annotated[AsyncSession, Depends(get_db, scope="function")],
+    token: Annotated[str | None, Depends(oauth2_scheme)],
+) -> User:
+    """Como `Student`, pero la sesión de BD se cierra al validar el token: la conexión de
+    tiempo real dura minutos y no debe retener una conexión a la base de datos."""
+    session = await auth_service.user_from_token(db, token)
+    if session is None:
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED,
+            "No autenticado o sesión expirada",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    user = session[1]
+    if user.role != Role.STUDENT:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "No tienes permiso para esta acción")
+    return user
+
+
+async def _notification_events(request: Request, user_id: int) -> AsyncIterator[bytes]:
+    with broker.subscribe(user_id) as queue:
+        # retry: si se corta, el cliente vuelve a conectar a los 5 s
+        yield format_sse_event(event="ready", data_str="{}", retry=5000)
+        deadline = time.monotonic() + STREAM_MAX_SECONDS
+        while (remaining := deadline - time.monotonic()) > 0:
+            try:
+                payload = await asyncio.wait_for(
+                    queue.get(), timeout=min(STREAM_PING_SECONDS, remaining)
+                )
+            except TimeoutError:
+                if await request.is_disconnected():
+                    return
+                yield format_sse_event(comment="ping")
+                continue
+            yield format_sse_event(event="notification", data_str=json.dumps(payload))
+
+
+@router.get(
+    "/notifications/stream",
+    summary="Mis avisos en tiempo real (Server-Sent Events)",
+    response_class=StreamingResponse,
+    responses={200: {"content": {"text/event-stream": {}}}},
+)
+async def notifications_stream(
+    request: Request,
+    student: Annotated[User, Depends(_stream_student, scope="function")],
+) -> StreamingResponse:
+    """Conexión abierta (`text/event-stream`) por la que llega cada aviso nuevo **del
+    estudiante autenticado** en cuanto se guarda la nota. Eventos: `ready` al conectar,
+    `notification` (mismo formato que `GET /student/notifications`) y comentarios `ping`
+    cada 20 s. Se cierra a los 30 min; el cliente debe volver a conectar. Los avisos
+    siguen en `GET /student/notifications` por si se pierde alguno sin conexión."""
+    return StreamingResponse(
+        _notification_events(request, student.id),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Notification, Subject
 from app.models.import_job import utcnow
 from app.services.evaluations import GradeUpdate
+from app.services.notification_stream import broker
 from app.services.rules import GradingRules, fmt
 
 MAX_BODY = 500
@@ -21,20 +22,32 @@ def _describe(update: GradeUpdate, rules: GradingRules) -> str:
 
 async def notify_grade_updates(
     db: AsyncSession, subject: Subject, updates: list[GradeUpdate], rules: GradingRules
-) -> int:
+) -> list[Notification]:
     """Un aviso por estudiante con sus notas nuevas o corregidas (los borrados no se
-    avisan). Devuelve cuántos avisos se crearon; hay que confirmar la sesión después."""
+    avisan). Devuelve los avisos creados: hay que confirmar la sesión y después enviarlos a
+    los estudiantes conectados con `publish`."""
     per_student: dict[int, list[GradeUpdate]] = defaultdict(list)
     for update_ in updates:
         if update_.value is not None:
             per_student[update_.student_id].append(update_)
+    created = []
     for student_id, items in per_student.items():
         title = f"{'Nueva nota' if len(items) == 1 else 'Nuevas notas'} en {subject.name}"
         body = " · ".join(_describe(item, rules) for item in items)
         if len(body) > MAX_BODY:
             body = body[: MAX_BODY - 1] + "…"
-        db.add(Notification(user_id=student_id, subject_id=subject.id, title=title, body=body))
-    return len(per_student)
+        notification = Notification(
+            user_id=student_id, subject_id=subject.id, title=title, body=body
+        )
+        db.add(notification)
+        created.append(notification)
+    return created
+
+
+async def commit_and_publish(db: AsyncSession, notifications: list[Notification]) -> None:
+    """Guarda los avisos y los envía en tiempo real a los estudiantes conectados."""
+    await db.commit()
+    broker.publish(notifications)
 
 
 async def list_notifications(

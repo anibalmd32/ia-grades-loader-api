@@ -110,3 +110,111 @@ async def test_solo_estudiantes(client, login_as):
     teacher = await login_as(Role.TEACHER)
     assert (await client.get("/student/notifications", headers=teacher)).status_code == 403
     assert (await client.get("/student/notifications")).status_code == 401
+
+
+# --- Tiempo real (SSE) -------------------------------------------------------------
+
+
+def sse_events(body: str) -> list[tuple[str | None, str | None]]:
+    """(evento, datos) de cada bloque de un text/event-stream (sin los ping)."""
+    events = []
+    for block in body.strip().split("\n\n"):
+        event = data = None
+        for line in block.splitlines():
+            if line.startswith("event: "):
+                event = line[7:]
+            elif line.startswith("data: "):
+                data = line[6:]
+        if event:
+            events.append((event, data))
+    return events
+
+
+async def open_stream(client, headers):
+    """Abre la conexión en segundo plano (el cliente de pruebas recibe el cuerpo al cerrarse)."""
+    import asyncio
+
+    return asyncio.create_task(client.get("/student/notifications/stream", headers=headers))
+
+
+async def wait_connected(user_id, count=1):
+    import asyncio
+
+    from app.services.notification_stream import broker
+
+    for _ in range(200):
+        if broker.connections(user_id) >= count:
+            return
+        await asyncio.sleep(0.01)
+    raise AssertionError("el estudiante no llegó a conectarse")
+
+
+async def test_el_aviso_llega_en_tiempo_real_solo_a_su_estudiante(client, campus, monkeypatch):
+    import json
+
+    from app.api.v1.routes import student as student_routes
+
+    monkeypatch.setattr(student_routes, "STREAM_MAX_SECONDS", 0.6)
+    monkeypatch.setattr(student_routes, "STREAM_PING_SECONDS", 0.2)
+    ana, beto = campus["students"]["Ana"], campus["students"]["Beto"]
+    ana_stream = await open_stream(client, ana["headers"])
+    beto_stream = await open_stream(client, beto["headers"])
+    await wait_connected(ana["id"])
+    await wait_connected(beto["id"])
+
+    mat = campus["subjects"]["MAT-101"]["id"]
+    await client.put(
+        f"/teacher/subjects/{mat}/grades",
+        json={"grades": [{"student_id": ana["id"], "term": 3, "value": 17}]},
+        headers=campus["teachers"]["Pedro Profe"],
+    )
+
+    ana_response = await ana_stream
+    assert ana_response.status_code == 200
+    assert ana_response.headers["content-type"].startswith("text/event-stream")
+    events = sse_events(ana_response.text)
+    assert [e for e, _ in events] == ["ready", "notification"]
+    notice = json.loads(events[1][1])
+    assert notice["title"] == "Nueva nota en Mate I"
+    assert notice["body"] == "Lapso 3: 17"
+    assert notice["read_at"] is None
+    assert ": ping" in ana_response.text
+
+    # Beto estaba conectado a la vez, pero la nota no era suya
+    beto_events = sse_events((await beto_stream).text)
+    assert [e for e, _ in beto_events] == ["ready"]
+
+    from app.services.notification_stream import broker
+
+    assert broker.connections(ana["id"]) == 0  # la conexión se libera al cerrarse
+
+
+async def test_el_stream_exige_sesion_de_estudiante(client, login_as):
+    assert (await client.get("/student/notifications/stream")).status_code == 401
+    teacher = await login_as(Role.TEACHER)
+    response = await client.get("/student/notifications/stream", headers=teacher)
+    assert response.status_code == 403
+
+
+def test_una_cola_llena_no_bloquea_al_resto():
+    import asyncio
+
+    from app.models import Notification
+    from app.services.notification_stream import QUEUE_SIZE, NotificationBroker
+
+    broker = NotificationBroker()
+    from datetime import datetime
+
+    notice = Notification(
+        id=1, user_id=7, title="t", body="b", subject_id=None, created_at=datetime(2026, 1, 1)
+    )
+    with broker.subscribe(7) as full, broker.subscribe(7) as other:
+        for _ in range(QUEUE_SIZE):
+            full.put_nowait({})
+        broker.publish([notice])
+        assert full.qsize() == QUEUE_SIZE
+        assert other.qsize() == 1
+        broker.publish([Notification(id=2, user_id=8, title="t", body="b")])  # nadie conectado
+    assert broker.connections(7) == 0
+    assert isinstance(other, asyncio.Queue)
+    assert other.get_nowait()["created_at"].startswith("2026-01-01")

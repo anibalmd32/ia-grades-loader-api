@@ -44,8 +44,9 @@ async def _checked_rules(db: DbSession, subject: Subject, term: int) -> rules.Gr
 
 async def _notify(db: DbSession, subject: Subject, updates, subject_rules) -> None:
     """Avisa a los estudiantes de sus notas nuevas o corregidas."""
-    if await notifications.notify_grade_updates(db, subject, updates, subject_rules):
-        await db.commit()
+    created = await notifications.notify_grade_updates(db, subject, updates, subject_rules)
+    if created:
+        await notifications.commit_and_publish(db, created)
 
 
 def _read(evaluation: Evaluation, graded: int) -> EvaluationRead:

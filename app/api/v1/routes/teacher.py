@@ -124,8 +124,8 @@ async def save_subject_grades(
         rules=subject_rules,
         import_job_id=data.import_job_id,
     )
-    await notifications.notify_grade_updates(db, subject, updates, subject_rules)
-    await db.commit()
+    created = await notifications.notify_grade_updates(db, subject, updates, subject_rules)
+    await notifications.commit_and_publish(db, created)
     return await _subject_grades(db, subject)
 
 
