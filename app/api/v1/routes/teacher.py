@@ -2,7 +2,17 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    Form,
+    HTTPException,
+    Query,
+    Response,
+    UploadFile,
+    status,
+)
 
 from app.api.deps import DbSession, require_roles
 from app.core.config import get_settings
@@ -20,7 +30,15 @@ from app.schemas.grades import (
     TermGrade,
 )
 from app.schemas.import_jobs import ImportJobRead, ImportJobSummary
-from app.services import academic, evaluations, grades, import_jobs, notifications, rules
+from app.services import (
+    academic,
+    evaluations,
+    grade_export,
+    grades,
+    import_jobs,
+    notifications,
+    rules,
+)
 from app.services.rules import MAX_TERMS
 from app.worker import notify_new_job
 
@@ -109,6 +127,36 @@ async def save_subject_grades(
     await notifications.notify_grade_updates(db, subject, updates, subject_rules)
     await db.commit()
     return await _subject_grades(db, subject)
+
+
+@router.get(
+    "/subjects/{subject_id}/grades/export",
+    summary="Descargar las notas de la materia en Excel",
+    response_class=Response,
+    responses={200: {"content": {grade_export.XLSX: {}}, "description": "Archivo .xlsx"}},
+)
+async def export_subject_grades(subject_id: int, teacher: Teacher, db: DbSession) -> Response:
+    """Hoja «Planilla» con la nota de cada lapso, el promedio, la definitiva y la situación
+    de cada estudiante, y una hoja más por cada lapso con plan de evaluación (notas de cada
+    evaluación, acumulado y nota del lapso). También en periodos cerrados."""
+    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    current = await rules.get_rules(db)
+    subject_rules = rules.for_semester(current, subject.semester)
+    roster = await grades.subject_roster(db, subject.id, subject_rules)
+    term_plans = {
+        term: await evaluations.term_sheet(db, subject.id, term, subject_rules)
+        for term in sorted(await evaluations.computed_terms(db, subject.id))
+        if subject_rules.term_error(term) is None
+    }
+    content = grade_export.subject_workbook(
+        subject, subject_rules, roster, term_plans, current.document_label
+    )
+    name = grade_export.file_name(subject, subject_rules)
+    return Response(
+        content,
+        media_type=grade_export.XLSX,
+        headers={"Content-Disposition": grade_export.content_disposition(name)},
+    )
 
 
 @router.get("/subjects/{subject_id}/grade-history", summary="Historial de cambios de notas")

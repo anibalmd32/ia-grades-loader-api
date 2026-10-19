@@ -119,8 +119,9 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
         # Para que el front pueda leer el id de la petición y mostrarlo en los errores, y
-        # cuántos segundos esperar cuando se supera un límite (429)
-        expose_headers=[REQUEST_ID_HEADER, "Retry-After"],
+        # cuántos segundos esperar cuando se supera un límite (429) y el nombre de los archivos
+        # que se descargan (Excel de notas)
+        expose_headers=[REQUEST_ID_HEADER, "Retry-After", "Content-Disposition"],
     )
     app.add_middleware(RequestIdMiddleware)
 

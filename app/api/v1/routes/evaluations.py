@@ -3,7 +3,7 @@
 from decimal import Decimal
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, status
+from fastapi import APIRouter, Depends, Path, Response, status
 
 from app.api.deps import DbSession, require_roles
 from app.core.errors import InvalidDataError
@@ -21,7 +21,7 @@ from app.schemas.evaluations import (
     TermPlan,
 )
 from app.schemas.grades import StudentSummary
-from app.services import academic, evaluations, grades, notifications, rules
+from app.services import academic, evaluations, grade_export, grades, notifications, rules
 from app.services.rules import MAX_TERMS
 
 router = APIRouter(prefix="/teacher/subjects/{subject_id}", tags=["Profesor: evaluaciones"])
@@ -172,6 +172,32 @@ async def term_evaluation_grades(
 ) -> TermEvaluationGrades:
     subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
     return await _term_grades(db, subject, term)
+
+
+@router.get(
+    "/terms/{term}/evaluation-grades/export",
+    summary="Descargar las notas de las evaluaciones de un lapso en Excel",
+    response_class=Response,
+    responses={200: {"content": {grade_export.XLSX: {}}, "description": "Archivo .xlsx"}},
+)
+async def export_term_evaluation_grades(
+    subject_id: int, term: TermPath, teacher: Teacher, db: DbSession
+) -> Response:
+    """Una fila por estudiante con la nota de cada evaluación del lapso, lo acumulado y la
+    nota del lapso (si ya se puede calcular). También en periodos cerrados."""
+    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    subject_rules = await _checked_rules(db, subject, term)
+    plan, rows = await evaluations.term_sheet(db, subject.id, term, subject_rules)
+    current = await rules.get_rules(db)
+    content = grade_export.term_workbook(
+        subject, subject_rules, term, plan, rows, current.document_label
+    )
+    name = grade_export.file_name(subject, subject_rules, term)
+    return Response(
+        content,
+        media_type=grade_export.XLSX,
+        headers={"Content-Disposition": grade_export.content_disposition(name)},
+    )
 
 
 @router.put("/terms/{term}/evaluation-grades", summary="Calificar evaluaciones de un lapso")
