@@ -29,6 +29,16 @@ class AssistantDisabledError(AppError):
 # Preguntas por minuto y estudiante, sumando app y Telegram (cada una llama a la IA)
 question_limiter = RateLimiter(lambda: get_settings().chat_rate_limit_per_minute)
 
+# Igual que el límite del cuerpo de POST /student/chat: también para Telegram (hasta 4096)
+MAX_QUESTION_CHARS = 1000
+
+
+class QuestionTooLongError(AppError):
+    status_code = 422
+
+    def __init__(self) -> None:
+        super().__init__(f"La pregunta es demasiado larga (máximo {MAX_QUESTION_CHARS} caracteres)")
+
 
 async def ensure_enabled(db: AsyncSession, channel: ChatChannel) -> rules.GradingRules:
     """403 si la institución desactivó el asistente (o su uso por Telegram)."""
@@ -45,6 +55,8 @@ async def _prepare(
 ) -> tuple[list[dict[str, Any]], Any]:
     """Carga el contexto, guarda la pregunta y devuelve (mensajes, ejecutor de herramientas)."""
     current = await ensure_enabled(db, conversation.channel)
+    if len(question) > MAX_QUESTION_CHARS:
+        raise QuestionTooLongError
     question_limiter.hit(student.id)
     history = await conversations.messages(
         db, conversation.id, last=get_settings().chat_max_history
@@ -65,7 +77,11 @@ async def _prepare(
         if tool is None:
             return {"error": "Esa consulta no existe. Usa solo las disponibles."}
         # El id del estudiante sale de la sesión, nunca de los argumentos del modelo
-        return await tool.run(db, student.id, args)
+        result = await tool.run(db, student.id, args)
+        # Cierra la transacción de la consulta: así no se retiene una conexión de la base de
+        # datos mientras la IA sigue escribiendo (puede tardar)
+        await db.commit()
+        return result
 
     return messages, call_tool
 

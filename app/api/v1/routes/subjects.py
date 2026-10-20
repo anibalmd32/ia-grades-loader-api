@@ -20,7 +20,7 @@ router = APIRouter(
 async def list_subjects(
     db: DbSession,
     semester_id: int | None = None,
-    q: Annotated[str | None, Query(description="Busca en código o nombre")] = None,
+    q: Annotated[str | None, Query(max_length=100, description="Busca en código o nombre")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Page[SubjectRead]:

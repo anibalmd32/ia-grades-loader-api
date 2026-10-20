@@ -67,12 +67,14 @@ def _write_table(
     sheet["A2"].font = Font(italic=True, color="555555")
     sheet.append([])
     sheet.append(headers)
+    _as_text(sheet[1] + sheet[2] + sheet[_TABLE_START])
     for cell in sheet[_TABLE_START]:
         cell.font = Font(bold=True)
         cell.fill = _HEADER_FILL
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
     for values in rows:
         sheet.append(values)
+        _as_text(sheet[sheet.max_row])
         for cell in sheet[sheet.max_row][numeric_from:]:
             if isinstance(cell.value, float):
                 cell.number_format = number_format
@@ -85,6 +87,17 @@ def _write_table(
             [len(str(header))] + [len(str(r[index - 1])) for r in rows if r[index - 1] is not None]
         )
         sheet.column_dimensions[get_column_letter(index)].width = min(max(widest + 2, 10), 40)
+
+
+def _as_text(cells) -> None:
+    """Los textos (nombres, materias, evaluaciones) nunca son fórmulas.
+
+    openpyxl guarda como fórmula cualquier texto que empiece por "=": un apellido como
+    `=HYPERLINK("https://...?"&A5, "Ver")` se ejecutaría al abrir el Excel del profesor.
+    """
+    for cell in cells:
+        if cell.data_type == "f":
+            cell.data_type = "s"
 
 
 def _person(student) -> list:

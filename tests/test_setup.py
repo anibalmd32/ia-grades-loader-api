@@ -9,7 +9,10 @@ ADMIN = {**names("Admin Principal"), "email": "Admin@Uni.edu", "password": "clav
 
 
 async def test_flujo_de_instalacion(client):
-    assert (await client.get("/setup/status")).json() == {"installed": False}
+    assert (await client.get("/setup/status")).json() == {
+        "installed": False,
+        "token_required": False,
+    }
 
     response = await client.post("/setup", json=ADMIN)
     assert response.status_code == 201
@@ -20,7 +23,10 @@ async def test_flujo_de_instalacion(client):
     me = await client.get("/auth/me", headers={"Authorization": f"Bearer {body['access_token']}"})
     assert me.json()["email"] == "admin@uni.edu"
 
-    assert (await client.get("/setup/status")).json() == {"installed": True}
+    assert (await client.get("/setup/status")).json() == {
+        "installed": True,
+        "token_required": False,
+    }
 
 
 async def test_instalador_desaparece_tras_instalar(client):

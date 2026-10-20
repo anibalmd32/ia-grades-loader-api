@@ -66,6 +66,7 @@ class TokenData:
     jti: str
     expires_at: datetime  # UTC sin zona horaria, igual que se guarda en BD
     token_version: int
+    issued_at: datetime  # UTC sin zona horaria
 
 
 def decode_access_token(token: str) -> TokenData | None:
@@ -76,13 +77,14 @@ def decode_access_token(token: str) -> TokenData | None:
             token,
             settings.jwt_secret_key.get_secret_value(),
             algorithms=[settings.jwt_algorithm],
-            options={"require": ["sub", "exp", "jti", "ver"]},
+            options={"require": ["sub", "exp", "iat", "jti", "ver"]},
         )
         return TokenData(
             user_id=int(payload["sub"]),
             jti=str(payload["jti"]),
             expires_at=datetime.fromtimestamp(payload["exp"], UTC).replace(tzinfo=None),
             token_version=int(payload["ver"]),
+            issued_at=datetime.fromtimestamp(payload["iat"], UTC).replace(tzinfo=None),
         )
     except (jwt.InvalidTokenError, ValueError, TypeError):
         return None

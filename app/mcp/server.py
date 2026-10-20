@@ -40,7 +40,7 @@ class StudentTokenVerifier(TokenVerifier):
         if session is None:
             return None
         data, user = session
-        if user.role != Role.STUDENT:
+        if user.role != Role.STUDENT or user.must_change_password:
             return None
         return AccessToken(
             token=token,

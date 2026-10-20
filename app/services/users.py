@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, InvalidDataError, NotFoundError
 from app.core.security import generate_password, hash_password
+from app.db.search import LIKE_ESCAPE, contains_pattern
 from app.models import Enrollment, Role, TeacherSubject, User
 from app.services import rules
 
@@ -82,9 +83,14 @@ async def list_users(
     if is_active is not None:
         query = query.where(User.is_active == is_active)
     if q and (term := q.strip()):
-        conditions = [User.full_name.ilike(f"%{term}%"), User.email.ilike(f"%{term}%")]
+        pattern = contains_pattern(term)
+        conditions = [
+            User.full_name.ilike(pattern, escape=LIKE_ESCAPE),
+            User.email.ilike(pattern, escape=LIKE_ESCAPE),
+        ]
         digits = term.replace(".", "").replace("-", "").lstrip("VvEe ")
-        if digits.isdigit():
+        # Una cédula tiene como mucho 9 dígitos (más no cabe en la columna)
+        if digits.isdigit() and len(digits) <= 9:
             conditions.append(User.cedula == int(digits))
         query = query.where(or_(*conditions))
     total = await db.scalar(select(func.count()).select_from(query.subquery()))

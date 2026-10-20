@@ -125,9 +125,12 @@ async def my_notifications(
 
 
 # Ping para que proxies y navegadores no corten la conexión por inactividad, y duración
-# máxima: la app vuelve a conectar sola (y así se revalida la sesión)
+# máxima: la app vuelve a conectar sola y así se revalida la sesión (un token revocado, una
+# cuenta desactivada o una contraseña restablecida dejan de recibir avisos en minutos)
 STREAM_PING_SECONDS = 20.0
-STREAM_MAX_SECONDS = 30 * 60.0
+STREAM_MAX_SECONDS = 5 * 60.0
+# Conexiones abiertas a la vez por estudiante (varias pestañas o dispositivos)
+STREAM_MAX_CONNECTIONS = 3
 
 
 async def _stream_student(
@@ -146,6 +149,16 @@ async def _stream_student(
     user = session[1]
     if user.role != Role.STUDENT:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "No tienes permiso para esta acción")
+    if user.must_change_password:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Debes cambiar tu contraseña antes de continuar"
+        )
+    if broker.connections(user.id) >= STREAM_MAX_CONNECTIONS:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "Demasiadas conexiones abiertas a tus avisos. Cierra otras pestañas o dispositivos.",
+            headers={"Retry-After": "30"},
+        )
     return user
 
 
@@ -180,7 +193,8 @@ async def notifications_stream(
     """Conexión abierta (`text/event-stream`) por la que llega cada aviso nuevo **del
     estudiante autenticado** en cuanto se guarda la nota. Eventos: `ready` al conectar,
     `notification` (mismo formato que `GET /student/notifications`) y comentarios `ping`
-    cada 20 s. Se cierra a los 30 min; el cliente debe volver a conectar. Los avisos
+    cada 20 s. Se cierra a los 5 min; el cliente debe volver a conectar (así se revalida la
+    sesión). Como mucho 3 conexiones a la vez por estudiante (429 si hay más). Los avisos
     siguen en `GET /student/notifications` por si se pierde alguno sin conexión."""
     return StreamingResponse(
         _notification_events(request, student.id),
@@ -204,6 +218,9 @@ Llm = Annotated[LLMClient, Depends(get_llm)]
 
 async def _conversation_for(db, student: User, conversation_id: int | None) -> Conversation:
     await chat.ensure_enabled(db, ChatChannel.APP)
+    # Antes de crear la conversación: sin esto, un estudiante sin preguntas disponibles
+    # podría seguir creando conversaciones vacías
+    chat.question_limiter.check(student.id)
     if conversation_id is None:
         return await conversations.create(db, student.id, ChatChannel.APP)
     return await conversations.get(db, student.id, conversation_id)
@@ -262,7 +279,7 @@ async def ask_about_my_grades_stream(
         conversation = await _conversation_for(db, student, data.conversation_id)
     except AppError as exc:
         # Ya es un stream: los errores (p. ej. asistente desactivado) van como evento
-        yield ServerSentEvent(event="error", data={"detail": exc.detail, "retry_after": None})
+        yield _error_event(exc)
         return
     yield ServerSentEvent(
         event="conversation",
@@ -272,12 +289,14 @@ async def ask_about_my_grades_stream(
         async for text in chat.ask_stream(db, llm, student, conversation, data.message):
             yield ServerSentEvent(event="delta", data={"text": text})
     except AppError as exc:
-        retry_after = exc.retry_after if isinstance(exc, RateLimitedError) else None
-        yield ServerSentEvent(
-            event="error", data={"detail": exc.detail, "retry_after": retry_after}
-        )
+        yield _error_event(exc)
         return
     yield ServerSentEvent(event="done", data={})
+
+
+def _error_event(exc: AppError) -> ServerSentEvent:
+    retry_after = exc.retry_after if isinstance(exc, RateLimitedError) else None
+    return ServerSentEvent(event="error", data={"detail": exc.detail, "retry_after": retry_after})
 
 
 @router.get("/conversations", summary="Mis conversaciones")

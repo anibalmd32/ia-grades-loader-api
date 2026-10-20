@@ -678,7 +678,14 @@ async def _seed_database(url: str, connect_args: dict, password: str) -> SeedSum
         await engine.dispose()
 
 
-def run(password: str = DEFAULT_PASSWORD) -> int:
+def run(password: str = DEFAULT_PASSWORD, allow_production: bool = False) -> int:
+    if get_settings().app_env == "production" and not allow_production:
+        # Crea un super admin con una contraseña conocida: nunca por accidente en producción
+        print(
+            "APP_ENV=production: no se cargan datos de demostración (crean cuentas con una "
+            "contraseña conocida). Si de verdad lo quieres, añade --allow-production."
+        )
+        return 1
     url, connect_args = engine_url_and_args(get_settings().database_url)
     parsed = make_url(url)
     print(f"Base de datos: {parsed.database} en {parsed.host or 'local'}")
@@ -701,10 +708,15 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_PASSWORD,
         help=f"contraseña de todas las cuentas (por defecto {DEFAULT_PASSWORD})",
     )
+    parser.add_argument(
+        "--allow-production",
+        action="store_true",
+        help="permitirlo con APP_ENV=production",
+    )
     args = parser.parse_args(argv)
     if len(args.password) < 8:
         parser.error("la contraseña debe tener al menos 8 caracteres")
-    return run(args.password)
+    return run(args.password, allow_production=args.allow_production)
 
 
 if __name__ == "__main__":

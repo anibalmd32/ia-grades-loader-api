@@ -4,6 +4,7 @@ from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
+from app.db.search import LIKE_ESCAPE, contains_pattern
 from app.models import Enrollment, Semester, Subject, TeacherSubject
 from app.models.import_job import utcnow
 from app.services import rules
@@ -115,8 +116,11 @@ async def list_subjects(
     if semester_id is not None:
         query = query.where(Subject.semester_id == semester_id)
     if q:
-        pattern = f"%{q.strip()}%"
-        query = query.where(Subject.name.ilike(pattern) | Subject.code.ilike(pattern))
+        pattern = contains_pattern(q.strip())
+        query = query.where(
+            Subject.name.ilike(pattern, escape=LIKE_ESCAPE)
+            | Subject.code.ilike(pattern, escape=LIKE_ESCAPE)
+        )
     total = await db.scalar(select(func.count()).select_from(query.subquery()))
     items = await db.scalars(query.order_by(Subject.code).limit(limit).offset(offset))
     return list(items), total or 0
@@ -162,6 +166,8 @@ async def update_subject(db: AsyncSession, subject_id: int, changes: dict) -> Su
 
 async def delete_subject(db: AsyncSession, subject_id: int) -> None:
     subject = await get_subject(db, subject_id)
+    # Un periodo cerrado conserva su historial: sus materias no se borran
+    await ensure_open(db, subject.semester)
     if await db.scalar(select(exists().where(Enrollment.subject_id == subject_id))):
         raise ConflictError("No se puede eliminar una materia con estudiantes matriculados")
     await db.delete(subject)

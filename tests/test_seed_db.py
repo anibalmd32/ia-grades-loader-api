@@ -48,7 +48,10 @@ async def test_no_siembra_sobre_una_base_con_datos(session, seeded):
 
 
 async def test_el_instalador_ya_no_esta_disponible(client, seeded):
-    assert (await client.get("/setup/status")).json() == {"installed": True}
+    assert (await client.get("/setup/status")).json() == {
+        "installed": True,
+        "token_required": False,
+    }
 
 
 async def test_demo_del_estudiante(client, seeded):

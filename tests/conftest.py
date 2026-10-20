@@ -63,11 +63,15 @@ def _test_jwt_secret():
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limits():
+    from app.services.auth import account_failures, ip_failures
     from app.services.chat import question_limiter
 
-    question_limiter.reset()
+    limiters = (question_limiter, account_failures, ip_failures)
+    for limiter in limiters:
+        limiter.reset()
     yield
-    question_limiter.reset()
+    for limiter in limiters:
+        limiter.reset()
 
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "").strip()
@@ -201,6 +205,16 @@ def create_user(session):
     return _create
 
 
+async def active_token(session, user_id: int) -> str:
+    """Token de una cuenta creada por la API como si ya hubiera cambiado su contraseña
+    generada (sin eso, la API solo le deja cambiarla)."""
+    user = await session.get(User, user_id)
+    user.must_change_password = False
+    await session.commit()
+    token, _ = create_access_token(user.id, user.role.value, user.token_version)
+    return token
+
+
 @pytest.fixture
 def login_as(create_user):
     """Crea un usuario del rol indicado y devuelve las cabeceras con su token."""
@@ -249,8 +263,7 @@ async def course(client, login_as, session):
         json={"student_ids": list(students.values())},
         headers=coord,
     )
-    user = await session.get(User, teacher_id)
-    token, _ = create_access_token(user.id, user.role.value, user.token_version)
+    token = await active_token(session, teacher_id)
     return {
         "subject_id": subject_id,
         "students": students,
@@ -284,8 +297,7 @@ async def campus(client, login_as, session):
         await client.put(
             f"/teachers/{teacher_id}/subjects", json={"subject_ids": subjects}, headers=coord
         )
-        user = await session.get(User, teacher_id)
-        token, _ = create_access_token(user.id, user.role.value, user.token_version)
+        token = await active_token(session, teacher_id)
         teachers[name] = {"Authorization": f"Bearer {token}"}
 
     students = {}
@@ -296,8 +308,7 @@ async def campus(client, login_as, session):
         created = await post("/students", {**names(name), "nationality": "V", "cedula": cedula})
         student_id = created["user"]["id"]
         await post(f"/students/{student_id}/subjects", {"subject_ids": subjects})
-        user = await session.get(User, student_id)
-        token, _ = create_access_token(user.id, user.role.value, user.token_version)
+        token = await active_token(session, student_id)
         students[name] = {"id": student_id, "headers": {"Authorization": f"Bearer {token}"}}
 
     async def grade(teacher, subject, student, term, value):

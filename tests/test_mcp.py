@@ -6,14 +6,13 @@ from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import AccessToken
 
 import app.mcp.server as mcp_server
-from app.core.security import create_access_token
 from app.mcp.server import StudentTokenVerifier, create_mcp
 from app.models import Role, User
+from tests.conftest import active_token
 
 
 async def token_for(session, user_id: int) -> str:
-    user = await session.get(User, user_id)
-    return create_access_token(user.id, user.role.value, user.token_version)[0]
+    return await active_token(session, user_id)
 
 
 # --- Verificación del token --------------------------------------------------

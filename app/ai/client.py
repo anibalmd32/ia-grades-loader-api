@@ -61,7 +61,13 @@ class LLMClient:
             try:
                 return schema.model_validate(json.loads(content))
             except (json.JSONDecodeError, ValidationError) as exc:
-                logger.warning("Respuesta del LLM inválida (intento %s): %s", attempt + 1, exc)
+                # Sin el detalle: incluiría nombres y cédulas del Excel
+                problem = (
+                    f"{exc.error_count()} errores de validación"
+                    if isinstance(exc, ValidationError)
+                    else "JSON mal formado"
+                )
+                logger.warning("Respuesta del LLM inválida (intento %s): %s", attempt + 1, problem)
                 messages += [
                     {"role": "assistant", "content": content},
                     {
@@ -115,6 +121,7 @@ class LLMClient:
                     temperature=self.settings.llm_temperature,
                     tools=tools,
                     stream=True,
+                    max_tokens=self.settings.llm_chat_max_tokens,
                 )
                 async for chunk in stream:
                     if not chunk.choices:

@@ -1,8 +1,8 @@
 import pytest
 from sqlalchemy import select
 
-from app.core.security import create_access_token
-from app.models import Grade, Role, User
+from app.models import Grade, Role
+from tests.conftest import active_token
 from tests.factories import names
 
 
@@ -48,8 +48,7 @@ async def school(client, coord, session):
         headers=coord,
     )
 
-    user = await session.get(User, teacher_id)
-    token, _ = create_access_token(user.id, user.role.value, user.token_version)
+    token = await active_token(session, teacher_id)
     return {
         "teacher": {"Authorization": f"Bearer {token}"},
         "teacher_id": teacher_id,

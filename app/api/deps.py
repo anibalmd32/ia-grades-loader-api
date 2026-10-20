@@ -45,10 +45,28 @@ async def get_token_data(
 CurrentToken = Annotated[TokenData, Depends(get_token_data)]
 
 
-async def get_current_user(
+async def get_pending_user(
     session: Annotated[tuple[TokenData, User], Depends(_authenticate)],
 ) -> User:
     return session[1]
+
+
+# Usuario autenticado aunque aún use la contraseña generada por el sistema: solo para
+# consultar su perfil, cambiar la contraseña y cerrar sesión.
+PendingUser = Annotated[User, Depends(get_pending_user)]
+
+_MUST_CHANGE_PASSWORD = HTTPException(
+    status_code=status.HTTP_403_FORBIDDEN,
+    detail="Debes cambiar tu contraseña antes de continuar",
+)
+
+
+async def get_current_user(user: PendingUser) -> User:
+    # La contraseña generada la conoce quien creó o restableció la cuenta: hasta que el
+    # usuario la cambie, la sesión no sirve para nada más
+    if user.must_change_password:
+        raise _MUST_CHANGE_PASSWORD
+    return user
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]

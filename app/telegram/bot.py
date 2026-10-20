@@ -91,10 +91,13 @@ class TelegramBot:
         async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
             logger.error("Error en el bot de Telegram", exc_info=context.error)
 
-        self.app.add_handler(CommandHandler("start", start))
-        self.app.add_handler(CommandHandler("nueva", new))
-        self.app.add_handler(CommandHandler("desvincular", unlink))
-        self.app.add_handler(CommandHandler(["ayuda", "help"], help_))
+        # Los comandos también solo en chats privados: un /start <código> en un grupo
+        # vincularía el grupo entero a la cuenta del estudiante
+        private = filters.ChatType.PRIVATE
+        self.app.add_handler(CommandHandler("start", start, filters=private))
+        self.app.add_handler(CommandHandler("nueva", new, filters=private))
+        self.app.add_handler(CommandHandler("desvincular", unlink, filters=private))
+        self.app.add_handler(CommandHandler(["ayuda", "help"], help_, filters=private))
         # Solo chats privados: el bot no responde notas en grupos
         self.app.add_handler(
             MessageHandler(filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND, message)

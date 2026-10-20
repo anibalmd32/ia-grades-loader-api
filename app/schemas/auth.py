@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 from app.models import Role
@@ -23,6 +25,28 @@ class BiometricLogin(BaseModel):
     """Inicio de sesión con huella desde la app del móvil."""
 
     credential: str = Field(min_length=1, max_length=128)
+
+
+class BiometricRegister(BaseModel):
+    """Alta del teléfono para entrar con huella."""
+
+    current_password: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="Contraseña actual. Obligatoria si la sesión se abrió hace más de 10 "
+        "minutos: así un token robado no basta para conseguir una credencial duradera",
+    )
+
+
+class BiometricDeviceRead(BaseModel):
+    """Teléfono con el inicio de sesión con huella activado."""
+
+    model_config = {"from_attributes": True}
+
+    id: int
+    created_at: datetime
+    last_used_at: datetime | None
 
 
 class BiometricCredential(BaseModel):

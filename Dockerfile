@@ -28,10 +28,14 @@ WORKDIR /app
 COPY --from=build --chown=app:app /app /app
 RUN chmod +x /app/docker-entrypoint.sh
 
+# FORWARDED_ALLOW_IPS: IPs del proxy inverso de las que uvicorn acepta X-Forwarded-For (la IP
+# real del cliente, que usa el límite de intentos de login). "*" confía en cualquiera: déjalo
+# solo si la API no es accesible directamente (p. ej. Render); si no, pon la IP del proxy.
 ENV PATH="/app/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     APP_ENV=production \
-    DEBUG=false
+    DEBUG=false \
+    FORWARDED_ALLOW_IPS="*"
 
 USER app
 EXPOSE 8000
@@ -41,4 +45,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 # --proxy-headers: detrás de un proxy inverso (Nginx, Caddy, Traefik) que termina el HTTPS
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers"]

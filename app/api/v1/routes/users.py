@@ -41,7 +41,9 @@ def build_user_router(
     @router.get("", summary=f"Listar {plural}")
     async def list_users(
         db: DbSession,
-        q: Annotated[str | None, Query(description="Busca por nombre, email o cédula")] = None,
+        q: Annotated[
+            str | None, Query(max_length=100, description="Busca por nombre, email o cédula")
+        ] = None,
         is_active: bool | None = None,
         limit: Annotated[int, Query(ge=1, le=100)] = 50,
         offset: Annotated[int, Query(ge=0)] = 0,

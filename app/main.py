@@ -9,6 +9,11 @@ from app.api.v1.router import api_router
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import REQUEST_ID_HEADER, RequestIdMiddleware, configure_logging
+from app.core.middleware import (
+    BodySizeLimitMiddleware,
+    SecurityHeadersMiddleware,
+    UnexpectedErrorMiddleware,
+)
 from app.db.session import SessionLocal
 from app.mcp.server import create_mcp
 
@@ -106,12 +111,17 @@ def create_app() -> FastAPI:
         description=DESCRIPTION,
         version="0.1.0",
         openapi_tags=OPENAPI_TAGS,
-        docs_url="/docs",
-        redoc_url="/redoc",
-        openapi_url="/openapi.json",
+        # En producción no se publica el mapa completo de la API (salvo API_DOCS_ENABLED)
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url="/redoc" if settings.docs_enabled else None,
+        openapi_url="/openapi.json" if settings.docs_enabled else None,
         debug=settings.debug,
     )
 
+    # El primero que se añade queda más adentro: los errores 500 y los 413 pasan por CORS
+    # (el front puede leerlos) y todas las respuestas llevan las cabeceras de seguridad
+    app.add_middleware(UnexpectedErrorMiddleware)
+    app.add_middleware(BodySizeLimitMiddleware, max_bytes=settings.max_request_bytes)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
@@ -123,6 +133,7 @@ def create_app() -> FastAPI:
         # que se descargan (Excel de notas)
         expose_headers=[REQUEST_ID_HEADER, "Retry-After", "Content-Disposition"],
     )
+    app.add_middleware(SecurityHeadersMiddleware, hsts=settings.app_env == "production")
     app.add_middleware(RequestIdMiddleware)
 
     register_error_handlers(app)

@@ -122,7 +122,11 @@ class TelegramBotService:
             conversation = await conversations.current(db, student.id, ChatChannel.TELEGRAM)
             try:
                 answer = await chat.ask(db, self.llm_factory(), student, conversation, text)
-            except (RateLimitedError, chat.AssistantDisabledError) as exc:
+            except (
+                RateLimitedError,
+                chat.AssistantDisabledError,
+                chat.QuestionTooLongError,
+            ) as exc:
                 return html.escape(exc.detail)
             except AppError as exc:
                 logger.warning("Fallo respondiendo en Telegram al chat %s: %s", chat_id, exc)

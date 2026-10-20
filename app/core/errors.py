@@ -7,6 +7,8 @@ Todas las respuestas de error tienen la forma {"detail": ...}; las inesperadas (
 import logging
 
 from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.core.logging import request_id_var
@@ -61,6 +63,17 @@ async def _handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
     )
 
 
+async def _handle_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+    # Igual que el de FastAPI pero sin "input": devolvería lo que se envió, contraseñas
+    # incluidas (p. ej. una contraseña nueva demasiado corta)
+    errors = [{k: v for k, v in error.items() if k != "input"} for error in exc.errors()]
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        content={"detail": jsonable_encoder(errors)},
+    )
+
+
 def register_error_handlers(app: FastAPI) -> None:
     app.add_exception_handler(AppError, _handle_app_error)
+    app.add_exception_handler(RequestValidationError, _handle_validation_error)
     app.add_exception_handler(Exception, _handle_unexpected)

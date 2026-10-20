@@ -122,11 +122,17 @@ CREATE USER 'grades'@'%' IDENTIFIED BY 'grades';
 GRANT ALL PRIVILEGES ON ia_grades_loader_db.* TO 'grades'@'%';
 ```
 
-### Secretos (`JWT_SECRET_KEY`, `TELEGRAM_WEBHOOK_SECRET`)
+### Secretos (`JWT_SECRET_KEY`, `TELEGRAM_WEBHOOK_SECRET`, `SETUP_TOKEN`)
 
 ```bash
 uv run python -c "import secrets; print(secrets.token_urlsafe(64))"
 ```
+
+`SETUP_TOKEN` es el **código de instalación**: el instalador (`POST /api/v1/setup`, pantalla
+*Instala el sistema*) lo pide en la cabecera `X-Setup-Token` para crear el super admin. Es
+obligatorio con `APP_ENV=production`: sin él, la instalación queda bloqueada (evita que un
+desconocido se adelante y se haga admin de una API recién desplegada). En desarrollo es
+opcional.
 
 ### Modelo de IA (`LLM_*`)
 
@@ -190,10 +196,14 @@ instalador del super admin vuelve a estar disponible. Pide escribir el nombre de
 para confirmar (`--yes` para no preguntar):
 
 ```bash
-python -m app.reset_db                          # shell de Render o dentro del contenedor
-docker compose exec api python -m app.reset_db  # con docker compose
+python -m app.reset_db --allow-production       # shell de Render o dentro del contenedor
+docker compose exec api python -m app.reset_db --allow-production  # con docker compose
 uv run python -m app.reset_db                   # en local (usa el DATABASE_URL del .env)
 ```
+
+Con `APP_ENV=production` (la imagen de Docker) `reset_db` y `seed_db` se niegan a ejecutarse
+salvo que se añada `--allow-production`: así no se borra la base real (ni se crea un super
+admin con la contraseña de demostración) por accidente.
 
 ### Datos de demostración (seeder)
 
@@ -208,7 +218,7 @@ son siempre los mismos.
 ```bash
 python -m app.seed_db                           # sobre una base vacía
 python -m app.reset_db --yes --seed             # borrar todo y sembrar en un paso
-docker compose exec api python -m app.reset_db --yes --seed
+docker compose exec api python -m app.reset_db --yes --seed --allow-production
 uv run python -m app.seed_db --password otra-clave
 ```
 
@@ -228,13 +238,53 @@ Si la base ya tiene datos, el seeder no toca nada y avisa.
 - `APP_ENV=production` en el `.env` del servidor (docker compose usa el valor del `.env`; si
   dice `development`, el contenedor arranca en modo desarrollo).
 - `JWT_SECRET_KEY` de al menos 32 caracteres (la API no arranca en producción sin él).
+- `DEBUG=false` (la API no arranca con `DEBUG=true` fuera de `development`).
+- `SETUP_TOKEN` antes del primer arranque si aún no se instaló (el instalador lo exige).
+- Swagger, ReDoc y `/openapi.json` quedan ocultos en producción; `API_DOCS_ENABLED=true` para
+  publicarlos.
 - `MYSQL_USER` distinto de `root` (la imagen de MySQL no lo permite).
 - `CORS_ORIGINS` solo con los orígenes reales del front.
 - HTTPS delante de la API con un proxy inverso (Nginx, Caddy, Traefik); la imagen ya acepta
-  sus cabeceras (`--proxy-headers`).
+  sus cabeceras (`--proxy-headers`). Si la API también es accesible directamente (sin pasar por
+  el proxy), pon en `FORWARDED_ALLOW_IPS` la IP del proxy: con `*` (por defecto) cualquiera
+  podría falsear su IP con `X-Forwarded-For` y saltarse el límite de intentos de login por IP.
+  Limita también el tamaño de las peticiones en el proxy (p. ej. `client_max_body_size 11m`).
 - Telegram: `TELEGRAM_WEBHOOK_URL` con el dominio público (basta el dominio) y
   `TELEGRAM_WEBHOOK_SECRET`. Si usas polling, solo **una** instancia con el bot activo
   (`TELEGRAM_BOT_EMBEDDED=false` en las demás).
 - Más de una réplica de la API: `RUN_MIGRATIONS=false` en todas menos una.
 - Copias de seguridad del volumen `mysql-data` (p. ej. `mysqldump` programado).
-- Revisa `CHAT_RATE_LIMIT_PER_MINUTE` según el presupuesto del proveedor de IA.
+- Revisa `CHAT_RATE_LIMIT_PER_MINUTE` y `LLM_CHAT_MAX_TOKENS` según el presupuesto del
+  proveedor de IA.
+
+## Seguridad
+
+Resumen de las protecciones (detalle en la documentación técnica de Notion):
+
+- **Contraseñas** con argon2 (calculado en un hilo aparte para no frenar la API) y tiempo de
+  respuesta igual exista o no la cuenta.
+- **Fuerza bruta:** tras `LOGIN_MAX_FAILURES_PER_ACCOUNT` intentos fallidos en una cuenta o
+  `LOGIN_MAX_FAILURES_PER_IP` desde una IP (en `LOGIN_FAILURE_WINDOW_MINUTES`), los logins, el
+  cambio de contraseña, la confirmación de la huella y el instalador responden **429** con
+  `Retry-After`. Un login correcto reinicia la cuenta.
+- **Sesiones:** JWT con `jti` (revocable en el logout) y versión de sesión (cambiar o restablecer
+  la contraseña cierra todas). Con la contraseña generada por el sistema
+  (`must_change_password`) la sesión solo sirve para `/auth/me`, cambiarla y cerrar sesión
+  (**403** en lo demás, también en MCP y en el stream de avisos).
+- **Huella:** activarla (`POST /auth/biometric`) pide la contraseña si la sesión tiene más de
+  10 minutos, así un token robado no basta para conseguir una credencial duradera. Hasta 5
+  teléfonos por usuario (`GET /auth/biometric` los lista).
+- **Autorización:** cada ruta comprueba el rol y la propiedad (materias asignadas, el propio
+  estudiante); un profesor deja de ver las importaciones de una materia que le quitan.
+- **Peticiones:** las de más de `MAX_UPLOAD_SIZE_MB + 1` MB se rechazan (**413**) antes de
+  leerlas. Los Excel se revisan antes de abrirlos (zip bombs, miles de filas o columnas vacías)
+  y al exportar ningún texto se convierte en fórmula.
+- **Respuestas:** cabeceras de seguridad (`nosniff`, `X-Frame-Options`, CSP, `no-store`, HSTS
+  en producción); los errores 500 son genéricos (con `request_id` y CORS para que el front lo
+  muestre) y los 422 no devuelven lo enviado (p. ej. contraseñas).
+- **Logs:** sin contraseñas, tokens ni valores de SQL (`hide_parameters`), ni datos personales
+  de los Excel.
+- **Tiempo real e IA:** el stream de avisos se reconecta cada 5 min (revalida la sesión) y admite
+  3 conexiones por estudiante; las preguntas al asistente tienen límite por minuto, de longitud
+  (también por Telegram, donde los comandos solo funcionan en chats privados) y de tokens, y no
+  retienen una conexión a la base de datos mientras la IA responde.

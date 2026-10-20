@@ -63,7 +63,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="después de reiniciar, cargar los datos de demostración (python -m app.seed_db)",
     )
+    parser.add_argument(
+        "--allow-production",
+        action="store_true",
+        help="permitirlo con APP_ENV=production (borra los datos reales)",
+    )
     args = parser.parse_args(argv)
+    if get_settings().app_env == "production" and not args.allow_production:
+        print(
+            "APP_ENV=production: no se borra nada. Si de verdad quieres vaciar la base de "
+            "producción, añade --allow-production."
+        )
+        return 1
 
     url, connect_args = engine_url_and_args(get_settings().database_url)
     parsed = make_url(url)
@@ -91,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
         from app import seed_db
 
         print("Base vacía con el esquema al día. Cargando datos de demostración...")
-        return seed_db.run()
+        return seed_db.run(allow_production=args.allow_production)
     print("Listo: base vacía con el esquema al día. Crea el super admin con el instalador.")
     return 0
 

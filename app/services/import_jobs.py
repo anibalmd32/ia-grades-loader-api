@@ -7,13 +7,13 @@ Flujo: la API encola (enqueue) y responde al instante; un worker reclama el trab
 import logging
 from datetime import timedelta
 
-from sqlalchemy import func, select, update
+from sqlalchemy import exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.client import LLMClient
 from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, NotFoundError
-from app.models import ImportJob, JobStatus, Subject
+from app.models import ImportJob, JobStatus, Subject, TeacherSubject
 from app.models.import_job import ACTIVE_STATUSES, utcnow
 from app.services import grade_import
 
@@ -66,9 +66,24 @@ async def enqueue(
     return job
 
 
+def _still_assigned(teacher_id: int):
+    """El profesor sigue asignado a la materia de la importación: si se la quitan, deja de
+    ver sus importaciones (traen la lista de estudiantes y sus notas)."""
+    return exists().where(
+        TeacherSubject.teacher_id == teacher_id,
+        TeacherSubject.subject_id == ImportJob.subject_id,
+    )
+
+
 async def get_job(db: AsyncSession, teacher_id: int, job_id: str) -> ImportJob:
-    job = await db.get(ImportJob, job_id)
-    if job is None or job.teacher_id != teacher_id:
+    job = await db.scalar(
+        select(ImportJob).where(
+            ImportJob.id == job_id,
+            ImportJob.teacher_id == teacher_id,
+            _still_assigned(teacher_id),
+        )
+    )
+    if job is None:
         raise NotFoundError("Importación no encontrada")
     return job
 
@@ -90,7 +105,7 @@ async def mark_confirmed(
 async def list_jobs(
     db: AsyncSession, teacher_id: int, subject_id: int | None, limit: int
 ) -> list[ImportJob]:
-    query = select(ImportJob).where(ImportJob.teacher_id == teacher_id)
+    query = select(ImportJob).where(ImportJob.teacher_id == teacher_id, _still_assigned(teacher_id))
     if subject_id is not None:
         query = query.where(ImportJob.subject_id == subject_id)
     query = query.order_by(ImportJob.created_at.desc()).limit(limit)

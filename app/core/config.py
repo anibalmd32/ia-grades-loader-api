@@ -28,14 +28,23 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     # Orígenes permitidos separados por coma (front Tauri, Vite dev server, etc.)
     cors_origins: str = "http://localhost:1420,tauri://localhost,http://tauri.localhost"
+    # Swagger, ReDoc y /openapi.json. Sin valor: visibles salvo con APP_ENV=production
+    api_docs_enabled: bool | None = None
+    # Código que pide el instalador (POST /setup, cabecera X-Setup-Token). Obligatorio con
+    # APP_ENV=production: sin él, quien llegue primero a una API recién desplegada sería admin
+    setup_token: SecretStr = SecretStr("")
 
     # --- Base de datos ---
     database_url: str = "mysql+asyncmy://root:@localhost:3306/ia_grades_loader_db"
     database_echo: bool = False
+    # Conexiones abiertas a la base de datos (fijas + extra) y segundos de espera por una libre
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_timeout: float = 10.0
 
     # --- Autenticación (JWT) ---
     jwt_secret_key: SecretStr = SecretStr(DEFAULT_JWT_SECRET)
-    jwt_algorithm: str = "HS256"
+    jwt_algorithm: Literal["HS256", "HS384", "HS512"] = "HS256"
     access_token_expire_minutes: int = 60
     # Longitud de la contraseña generada para profesores y estudiantes nuevos
     generated_password_length: int = 10
@@ -50,8 +59,17 @@ class Settings(BaseSettings):
     llm_max_retries: int = 2
     # Mensajes previos de la conversación que se reenvían al modelo en el chat
     chat_max_history: int = 10
+    # Tope de tokens de cada respuesta del asistente (acota el coste y el tiempo)
+    llm_chat_max_tokens: int = 1500
     # Preguntas a la IA por minuto y estudiante (app + Telegram). 0 = sin límite
     chat_rate_limit_per_minute: int = 10
+
+    # --- Protección contra fuerza bruta en el inicio de sesión (0 = sin límite) ---
+    # Intentos fallidos por cuenta (email, cédula o teléfono) en la ventana
+    login_max_failures_per_account: int = 10
+    # Intentos fallidos desde una misma IP en la ventana (frena probar muchas cuentas)
+    login_max_failures_per_ip: int = 50
+    login_failure_window_minutes: int = 15
 
     # --- Telegram ---
     telegram_bot_token: SecretStr = SecretStr("")
@@ -101,6 +119,25 @@ class Settings(BaseSettings):
                 f"y no ser el valor por defecto cuando APP_ENV={self.app_env}"
             )
         return self
+
+    @model_validator(mode="after")
+    def _no_debug_outside_development(self) -> "Settings":
+        # En modo debug Starlette devuelve la traza completa del error (con el SQL y sus
+        # parámetros) a quien hizo la petición
+        if self.debug and self.app_env != "development":
+            raise ValueError(f"DEBUG no se puede activar con APP_ENV={self.app_env}")
+        return self
+
+    @property
+    def docs_enabled(self) -> bool:
+        if self.api_docs_enabled is not None:
+            return self.api_docs_enabled
+        return self.app_env != "production"
+
+    @property
+    def max_request_bytes(self) -> int:
+        # El archivo más grande permitido más 1 MB para el resto del formulario multipart
+        return (self.max_upload_size_mb + 1) * 1024 * 1024
 
     @property
     def cors_origins_list(self) -> list[str]:
