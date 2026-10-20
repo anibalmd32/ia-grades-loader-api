@@ -19,6 +19,20 @@ class StudentLogin(BaseModel):
     password: str = Field(min_length=1, max_length=128)
 
 
+class BiometricLogin(BaseModel):
+    """Inicio de sesión con huella desde la app del móvil."""
+
+    credential: str = Field(min_length=1, max_length=128)
+
+
+class BiometricCredential(BaseModel):
+    device_id: int
+    credential: str = Field(
+        description="Credencial del teléfono (`<id>.<secreto>`). Se devuelve una sola vez: la "
+        "app la guarda y la envía a `/auth/login/biometric` tras verificar la huella"
+    )
+
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"

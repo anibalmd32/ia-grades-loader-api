@@ -5,7 +5,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 
 from app.api.deps import CurrentToken, CurrentUser, DbSession
-from app.schemas.auth import ChangePasswordRequest, StaffLogin, StudentLogin, TokenResponse
+from app.schemas.auth import (
+    BiometricCredential,
+    BiometricLogin,
+    ChangePasswordRequest,
+    StaffLogin,
+    StudentLogin,
+    TokenResponse,
+)
 from app.schemas.user import UserRead
 from app.services import auth as auth_service
 
@@ -38,6 +45,35 @@ async def login_student(data: StudentLogin, db: DbSession) -> TokenResponse:
     return await _login(
         auth_service.authenticate_student(db, data.nationality, data.cedula, data.password)
     )
+
+
+@router.post("/login/biometric", summary="Login con huella (app del móvil)")
+async def login_biometric(data: BiometricLogin, db: DbSession) -> TokenResponse:
+    """La app del móvil envía la credencial que recibió al activar el inicio con huella
+    (`POST /auth/biometric`), solo después de que el usuario verifique su huella o cara."""
+    return await _login(auth_service.authenticate_biometric(db, data.credential))
+
+
+@router.post(
+    "/biometric",
+    status_code=status.HTTP_201_CREATED,
+    summary="Activar el inicio de sesión con huella en este teléfono",
+)
+async def register_biometric(user: CurrentUser, db: DbSession) -> BiometricCredential:
+    """Devuelve la credencial del teléfono una sola vez. Cerrar sesión no la invalida;
+    cambiar o restablecer la contraseña, sí."""
+    device_id, credential = await auth_service.register_biometric_device(db, user)
+    return BiometricCredential(device_id=device_id, credential=credential)
+
+
+@router.delete(
+    "/biometric/{device_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Desactivar el inicio de sesión con huella en un teléfono",
+)
+async def remove_biometric(device_id: int, user: CurrentUser, db: DbSession) -> None:
+    if not await auth_service.remove_biometric_device(db, user, device_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Dispositivo no encontrado")
 
 
 @router.post("/token", summary="Login para Swagger (OAuth2)")

@@ -1,5 +1,8 @@
 """Autenticación: el personal entra con email y los estudiantes con tipo + número de cédula."""
 
+import hashlib
+import hmac
+import secrets
 from datetime import UTC, datetime
 
 from sqlalchemy import delete, select
@@ -12,7 +15,7 @@ from app.core.security import (
     hash_password,
     verify_password,
 )
-from app.models import STAFF_ROLES, RevokedToken, Role, User
+from app.models import STAFF_ROLES, BiometricDevice, RevokedToken, Role, User
 from app.schemas.auth import TokenResponse
 
 
@@ -64,6 +67,59 @@ async def change_password(
     user.must_change_password = False
     user.token_version += 1  # cierra todas las sesiones, incluida la actual
     await db.commit()
+
+
+def _hash_secret(secret: str) -> str:
+    return hashlib.sha256(secret.encode()).hexdigest()
+
+
+def _now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)
+
+
+async def register_biometric_device(db: AsyncSession, user: User) -> tuple[int, str]:
+    """Da de alta el teléfono para entrar con huella. Devuelve su id y su credencial
+    (`<id>.<secreto>`), que solo se conoce en este momento."""
+    secret = secrets.token_urlsafe(32)
+    device = BiometricDevice(
+        user_id=user.id,
+        secret_hash=_hash_secret(secret),
+        token_version=user.token_version,
+        created_at=_now(),
+    )
+    db.add(device)
+    await db.commit()
+    return device.id, f"{device.id}.{secret}"
+
+
+async def remove_biometric_device(db: AsyncSession, user: User, device_id: int) -> bool:
+    """Borra un teléfono del usuario. False si no existe o es de otro usuario."""
+    device = await db.get(BiometricDevice, device_id)
+    if device is None or device.user_id != user.id:
+        return False
+    await db.delete(device)
+    await db.commit()
+    return True
+
+
+async def authenticate_biometric(db: AsyncSession, credential: str) -> User:
+    """Login con la credencial del teléfono (la app la envía tras verificar la huella).
+
+    No vale si se borró, si el secreto no coincide o si el usuario cambió o le restablecieron
+    la contraseña después de activarla.
+    """
+    device_id, _, secret = credential.partition(".")
+    device = await db.get(BiometricDevice, int(device_id)) if device_id.isdigit() else None
+    if device is None or not hmac.compare_digest(device.secret_hash, _hash_secret(secret)):
+        raise InvalidCredentialsError
+    user = await db.get(User, device.user_id)
+    if user is None or user.token_version != device.token_version:
+        raise InvalidCredentialsError
+    if not user.is_active:
+        raise AccountDisabledError
+    device.last_used_at = _now()
+    await db.commit()
+    return user
 
 
 def issue_token(user: User) -> TokenResponse:

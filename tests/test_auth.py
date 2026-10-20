@@ -201,3 +201,72 @@ async def test_cambio_de_password_cierra_todas_las_sesiones(client, create_user)
     assert (await client.get("/auth/me", headers=bearer(other_device))).status_code == 401
     fresh = (await login_staff(client, "t@uni.edu", "nueva-clave")).json()["access_token"]
     assert (await client.get("/auth/me", headers=bearer(fresh))).status_code == 200
+
+
+async def register_biometric(client, token: str) -> dict:
+    response = await client.post("/auth/biometric", headers=bearer(token))
+    assert response.status_code == 201
+    return response.json()
+
+
+async def login_biometric(client, credential: str):
+    return await client.post("/auth/login/biometric", json={"credential": credential})
+
+
+async def test_login_con_huella(client, create_user):
+    await create_user(Role.STUDENT, cedula=4321, **names("Ana Pérez"))
+    token = (await login_student(client, 4321)).json()["access_token"]
+    device = await register_biometric(client, token)
+    # Cerrar sesión no desactiva la huella: sirve justo para volver a entrar sin contraseña
+    await client.post("/auth/logout", headers=bearer(token))
+
+    response = await login_biometric(client, device["credential"])
+    assert response.status_code == 200
+    me = await client.get("/auth/me", headers=bearer(response.json()["access_token"]))
+    assert me.json()["full_name"] == "Ana Pérez"
+
+
+@pytest.mark.parametrize("credential", ["basura", "999.secreto", ".x", "1."])
+async def test_login_con_huella_credencial_invalida(client, create_user, credential):
+    await create_user(Role.TEACHER, email="t@uni.edu")
+    token = (await login_staff(client, "t@uni.edu")).json()["access_token"]
+    device = await register_biometric(client, token)
+    assert (await login_biometric(client, credential)).status_code == 401
+    wrong_secret = f"{device['device_id']}.otro"
+    assert (await login_biometric(client, wrong_secret)).status_code == 401
+
+
+async def test_huella_desactivada_deja_de_valer(client, create_user):
+    await create_user(Role.TEACHER, email="t@uni.edu")
+    await create_user(Role.TEACHER, email="otro@uni.edu")
+    token = (await login_staff(client, "t@uni.edu")).json()["access_token"]
+    other = (await login_staff(client, "otro@uni.edu")).json()["access_token"]
+    device = await register_biometric(client, token)
+    path = f"/auth/biometric/{device['device_id']}"
+
+    # Solo el dueño puede borrarla
+    assert (await client.delete(path, headers=bearer(other))).status_code == 404
+    assert (await client.delete(path, headers=bearer(token))).status_code == 204
+    assert (await client.delete(path, headers=bearer(token))).status_code == 404
+    assert (await login_biometric(client, device["credential"])).status_code == 401
+
+
+async def test_huella_caduca_al_cambiar_password(client, create_user):
+    await create_user(Role.TEACHER, email="t@uni.edu")
+    token = (await login_staff(client, "t@uni.edu")).json()["access_token"]
+    device = await register_biometric(client, token)
+    await client.post(
+        "/auth/change-password",
+        json={"current_password": "secreta123", "new_password": "nueva-clave"},
+        headers=bearer(token),
+    )
+    assert (await login_biometric(client, device["credential"])).status_code == 401
+
+
+async def test_huella_de_cuenta_desactivada(client, create_user, session):
+    user = await create_user(Role.TEACHER, email="t@uni.edu")
+    token = (await login_staff(client, "t@uni.edu")).json()["access_token"]
+    device = await register_biometric(client, token)
+    user.is_active = False
+    await session.commit()
+    assert (await login_biometric(client, device["credential"])).status_code == 403

@@ -1,6 +1,7 @@
 """Modelos ORM. Importarlos aquí registra todas las tablas en Base.metadata (Alembic)."""
 
 from app.models.academic import Semester, Subject, TeacherSubject
+from app.models.biometric_device import BiometricDevice
 from app.models.conversation import ChatChannel, Conversation, ConversationMessage, MessageRole
 from app.models.enrollment import Enrollment, Grade
 from app.models.evaluation import Evaluation, EvaluationGrade
@@ -15,6 +16,7 @@ from app.models.user import STAFF_ROLES, Nationality, Role, User
 
 __all__ = [
     "AcademicSettings",
+    "BiometricDevice",
     "STAFF_ROLES",
     "ChangeSource",
     "ChatChannel",
