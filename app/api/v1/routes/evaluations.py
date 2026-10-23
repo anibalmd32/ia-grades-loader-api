@@ -1,4 +1,5 @@
-"""Plan de evaluación de cada lapso y notas por evaluación (profesor de la materia)."""
+"""Plan de evaluación de cada lapso y notas por evaluación (profesor de la materia en su
+sección: cada sección tiene su propio plan)."""
 
 from decimal import Decimal
 from typing import Annotated
@@ -7,8 +8,8 @@ from fastapi import APIRouter, Depends, Path, Response, status
 
 from app.api.deps import DbSession, require_roles
 from app.core.errors import InvalidDataError
-from app.models import Evaluation, Role, Subject, User
-from app.schemas.academic import SubjectRead
+from app.models import Evaluation, Role, Section, Subject, User
+from app.schemas.academic import SectionRead, SubjectRead
 from app.schemas.evaluations import (
     EvaluationCreate,
     EvaluationGradesUpdate,
@@ -24,7 +25,10 @@ from app.schemas.grades import StudentSummary
 from app.services import academic, evaluations, grade_export, grades, notifications, rules
 from app.services.rules import MAX_TERMS
 
-router = APIRouter(prefix="/teacher/subjects/{subject_id}", tags=["Profesor: evaluaciones"])
+router = APIRouter(
+    prefix="/teacher/subjects/{subject_id}/sections/{section_id}",
+    tags=["Profesor: evaluaciones"],
+)
 
 Teacher = Annotated[User, Depends(require_roles(Role.TEACHER))]
 TermPath = Annotated[int, Path(ge=1, le=MAX_TERMS, description="Lapso")]
@@ -70,19 +74,22 @@ def _term_plan(term: int, plan: list[Evaluation]) -> TermPlan:
     )
 
 
-async def _graded_counts(db: DbSession, subject_id: int) -> dict[int, int]:
-    return {e.id: count for e, count in await evaluations.list_plan(db, subject_id)}
+async def _graded_counts(db: DbSession, subject_id: int, section_id: int) -> dict[int, int]:
+    return {e.id: count for e, count in await evaluations.list_plan(db, subject_id, section_id)}
 
 
-@router.get("/evaluations", summary="Plan de evaluación de la materia")
-async def evaluation_plan(subject_id: int, teacher: Teacher, db: DbSession) -> EvaluationPlan:
+@router.get("/evaluations", summary="Plan de evaluación de la materia en la sección")
+async def evaluation_plan(
+    subject_id: int, section_id: int, teacher: Teacher, db: DbSession
+) -> EvaluationPlan:
     """Evaluaciones de cada lapso con su porcentaje. Un lapso con evaluaciones calcula su
     nota a partir de ellas cuando sus porcentajes suman 100 %."""
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     subject_rules = await _rules_for(db, subject)
-    items = await evaluations.list_plan(db, subject.id)
+    items = await evaluations.list_plan(db, subject.id, section.id)
     return EvaluationPlan(
         subject=SubjectRead.model_validate(subject),
+        section=SectionRead.model_validate(section),
         terms=[
             _term_plan(term, [e for e, _ in items if e.term == term])
             for term in subject_rules.terms
@@ -93,15 +100,16 @@ async def evaluation_plan(subject_id: int, teacher: Teacher, db: DbSession) -> E
 
 @router.post("/evaluations", status_code=status.HTTP_201_CREATED, summary="Añadir una evaluación")
 async def create_evaluation(
-    subject_id: int, data: EvaluationCreate, teacher: Teacher, db: DbSession
+    subject_id: int, section_id: int, data: EvaluationCreate, teacher: Teacher, db: DbSession
 ) -> EvaluationRead:
     """Los porcentajes de un lapso no pueden pasar del 100 % (422). La primera evaluación
     de un lapso exige que no tenga notas cargadas directamente (409)."""
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     await academic.ensure_open(db, subject.semester)
     evaluation = await evaluations.create_evaluation(
         db,
         subject,
+        section.id,
         await _rules_for(db, subject),
         term=data.term,
         name=data.name,
@@ -113,12 +121,17 @@ async def create_evaluation(
 
 @router.patch("/evaluations/{evaluation_id}", summary="Modificar una evaluación")
 async def update_evaluation(
-    subject_id: int, evaluation_id: int, data: EvaluationUpdate, teacher: Teacher, db: DbSession
+    subject_id: int,
+    section_id: int,
+    evaluation_id: int,
+    data: EvaluationUpdate,
+    teacher: Teacher,
+    db: DbSession,
 ) -> EvaluationRead:
     """Cambiar el porcentaje recalcula la nota del lapso de todos los estudiantes."""
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     await academic.ensure_open(db, subject.semester)
-    evaluation = await evaluations.get_evaluation(db, subject.id, evaluation_id)
+    evaluation = await evaluations.get_evaluation(db, subject.id, section.id, evaluation_id)
     changes = data.model_dump(exclude_unset=True)
     changes = {k: v for k, v in changes.items() if v is not None or k == "due_date"}
     subject_rules = await _rules_for(db, subject)
@@ -126,7 +139,8 @@ async def update_evaluation(
         db, evaluation, subject_rules, changes, teacher.id
     )
     await _notify(db, subject, updates, subject_rules)
-    return _read(evaluation, (await _graded_counts(db, subject.id)).get(evaluation.id, 0))
+    counts = await _graded_counts(db, subject.id, section.id)
+    return _read(evaluation, counts.get(evaluation.id, 0))
 
 
 @router.delete(
@@ -135,32 +149,39 @@ async def update_evaluation(
     summary="Eliminar una evaluación y sus notas",
 )
 async def delete_evaluation(
-    subject_id: int, evaluation_id: int, teacher: Teacher, db: DbSession
+    subject_id: int, section_id: int, evaluation_id: int, teacher: Teacher, db: DbSession
 ) -> None:
     """Borra también sus notas y recalcula la nota del lapso. Si era la última del lapso,
     este vuelve a cargarse directamente (queda sin notas)."""
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     await academic.ensure_open(db, subject.semester)
-    evaluation = await evaluations.get_evaluation(db, subject.id, evaluation_id)
+    evaluation = await evaluations.get_evaluation(db, subject.id, section.id, evaluation_id)
     subject_rules = await _rules_for(db, subject)
     updates = await evaluations.delete_evaluation(db, evaluation, subject_rules, teacher.id)
     await _notify(db, subject, updates, subject_rules)
 
 
-async def _term_grades(db: DbSession, subject: Subject, term: int) -> TermEvaluationGrades:
+async def _term_grades(
+    db: DbSession, subject: Subject, section: Section, term: int
+) -> TermEvaluationGrades:
     subject_rules = await _checked_rules(db, subject, term)
-    plan, rows = await evaluations.term_sheet(db, subject.id, term, subject_rules)
-    counts = await _graded_counts(db, subject.id)
+    plan, rows = await evaluations.term_sheet(db, subject.id, section.id, term, subject_rules)
+    counts = await _graded_counts(db, subject.id, section.id)
     return TermEvaluationGrades(
         subject=SubjectRead.model_validate(subject),
+        section=SectionRead.model_validate(section),
         plan=_term_plan(term, plan),
         evaluations=[_read(e, counts.get(e.id, 0)) for e in plan],
         students=[
             StudentEvaluationGrades(
                 student=StudentSummary.model_validate(row.student),
-                grades=[EvaluationValue(evaluation_id=e, value=v) for e, v in row.values.items()],
+                grades=[
+                    EvaluationValue(evaluation_id=e, value=v, absent=e in row.absent)
+                    for e, v in row.values.items()
+                ],
                 accumulated=row.accumulated,
                 term_grade=row.term_grade,
+                term_absent=row.term_absent,
             )
             for row in rows
         ],
@@ -169,10 +190,10 @@ async def _term_grades(db: DbSession, subject: Subject, term: int) -> TermEvalua
 
 @router.get("/terms/{term}/evaluation-grades", summary="Notas de las evaluaciones de un lapso")
 async def term_evaluation_grades(
-    subject_id: int, term: TermPath, teacher: Teacher, db: DbSession
+    subject_id: int, section_id: int, term: TermPath, teacher: Teacher, db: DbSession
 ) -> TermEvaluationGrades:
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
-    return await _term_grades(db, subject, term)
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
+    return await _term_grades(db, subject, section, term)
 
 
 @router.get(
@@ -182,18 +203,18 @@ async def term_evaluation_grades(
     responses={200: {"content": {grade_export.XLSX: {}}, "description": "Archivo .xlsx"}},
 )
 async def export_term_evaluation_grades(
-    subject_id: int, term: TermPath, teacher: Teacher, db: DbSession
+    subject_id: int, section_id: int, term: TermPath, teacher: Teacher, db: DbSession
 ) -> Response:
-    """Una fila por estudiante con la nota de cada evaluación del lapso, lo acumulado y la
-    nota del lapso (si ya se puede calcular). También en periodos cerrados."""
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    """Una fila por estudiante de la sección con la nota de cada evaluación del lapso, lo
+    acumulado y la nota del lapso (si ya se puede calcular). También en periodos cerrados."""
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     subject_rules = await _checked_rules(db, subject, term)
-    plan, rows = await evaluations.term_sheet(db, subject.id, term, subject_rules)
+    plan, rows = await evaluations.term_sheet(db, subject.id, section.id, term, subject_rules)
     current = await rules.get_rules(db)
     content = grade_export.term_workbook(
-        subject, subject_rules, term, plan, rows, current.document_label
+        subject, section, subject_rules, term, plan, rows, current.document_label
     )
-    name = grade_export.file_name(subject, subject_rules, term)
+    name = grade_export.file_name(subject, section, subject_rules, term)
     return Response(
         content,
         media_type=grade_export.XLSX,
@@ -203,22 +224,29 @@ async def export_term_evaluation_grades(
 
 @router.put("/terms/{term}/evaluation-grades", summary="Calificar evaluaciones de un lapso")
 async def save_term_evaluation_grades(
-    subject_id: int, term: TermPath, data: EvaluationGradesUpdate, teacher: Teacher, db: DbSession
+    subject_id: int,
+    section_id: int,
+    term: TermPath,
+    data: EvaluationGradesUpdate,
+    teacher: Teacher,
+    db: DbSession,
 ) -> TermEvaluationGrades:
-    """Envía solo las notas que cambian (`value: null` borra). Todo o nada: 404 si una
-    evaluación no es de ese lapso o un estudiante no está matriculado, 422 si una nota no
-    cumple la escala y 409 si el periodo está cerrado. La nota del lapso se recalcula y cada
-    estudiante con notas nuevas recibe un aviso."""
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    """Envía solo las notas que cambian (`value: null` borra; `absent: true` sin `value`
+    marca al estudiante como inasistente en esa evaluación, con la nota mínima). Todo o
+    nada: 404 si una evaluación no es de ese lapso o un estudiante no está matriculado en la
+    sección, 422 si una nota no cumple la escala y 409 si el periodo está cerrado. La nota
+    del lapso se recalcula y cada estudiante con notas nuevas recibe un aviso."""
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     await academic.ensure_open(db, subject.semester)
     subject_rules = await _checked_rules(db, subject, term)
     updates = await evaluations.save_evaluation_grades(
         db,
         subject.id,
+        section.id,
         term,
-        [(g.student_id, g.evaluation_id, g.value) for g in data.grades],
+        [(g.student_id, g.evaluation_id, g.value, g.absent) for g in data.grades],
         updated_by_id=teacher.id,
         rules=subject_rules,
     )
     await _notify(db, subject, updates, subject_rules)
-    return await _term_grades(db, subject, term)
+    return await _term_grades(db, subject, section, term)

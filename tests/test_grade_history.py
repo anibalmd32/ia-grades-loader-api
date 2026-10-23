@@ -1,9 +1,10 @@
 from app.models import Role
+from tests.conftest import class_url
 
 
 async def put(client, campus, entries, subject="MAT-101", teacher="Pedro Profe", **extra):
     response = await client.put(
-        f"/teacher/subjects/{campus['subjects'][subject]['id']}/grades",
+        f"{campus['urls'][subject]}/grades",
         json={"grades": entries, **extra},
         headers=campus["teachers"][teacher],
     )
@@ -19,8 +20,9 @@ async def test_registra_altas_correcciones_y_borrados(client, campus):
     # Sin cambios reales no se registra nada
     await put(client, campus, [{"student_id": ana, "term": 1, "value": 16}])
 
-    teacher = campus["teachers"]["Laura Profe"]
-    response = await client.get(f"/teacher/subjects/{mat}/grade-history", headers=teacher)
+    teacher = campus["teachers"]["Pedro Profe"]
+    history_url = f"{campus['urls']['MAT-101']}/grade-history"
+    response = await client.get(history_url, headers=teacher)
     assert response.status_code == 200
     body = response.json()
     assert body["total"] == 5
@@ -32,11 +34,18 @@ async def test_registra_altas_correcciones_y_borrados(client, campus):
     assert correction["student"]["first_name"] == "Ana"
 
     only_beto = await client.get(
-        f"/teacher/subjects/{mat}/grade-history",
+        history_url,
         params={"student_id": campus["students"]["Beto"]["id"]},
         headers=teacher,
     )
     assert [c["new_value"] for c in only_beto.json()["items"]] == [20]
+
+    # Laura da MAT-101 en la sección B: no ve los cambios de los estudiantes de la A
+    laura = campus["teachers"]["Laura Profe"]
+    other = class_url(mat, campus["sections"]["2026-I B"])
+    response = await client.get(f"{other}/grade-history", headers=laura)
+    assert response.status_code == 200
+    assert response.json()["total"] == 0
 
 
 async def test_cambios_desde_importacion(client, campus, session):
@@ -48,6 +57,7 @@ async def test_cambios_desde_importacion(client, campus, session):
     job = ImportJob(
         teacher_id=teacher_id,
         subject_id=mat,
+        section_id=campus["sections"]["2026-I"],
         status=JobStatus.DONE,
         file_name="notas.xlsx",
         result={},
@@ -57,22 +67,22 @@ async def test_cambios_desde_importacion(client, campus, session):
     ana = campus["students"]["Ana"]["id"]
     await put(client, campus, [{"student_id": ana, "term": 3, "value": 12}], import_job_id=job.id)
 
-    body = (await client.get(f"/teacher/subjects/{mat}/grade-history", headers=pedro)).json()
+    url = f"{campus['urls']['MAT-101']}/grade-history"
+    body = (await client.get(url, headers=pedro)).json()
     assert body["items"][0]["source"] == "import"
     assert body["items"][0]["import_job_id"] == job.id
 
 
 async def test_permisos(client, campus, login_as):
     mat = campus["subjects"]["MAT-101"]["id"]
-    fis = campus["subjects"]["FIS-101"]["id"]
     # Laura no da Física
     laura = campus["teachers"]["Laura Profe"]
     assert (
-        await client.get(f"/teacher/subjects/{fis}/grade-history", headers=laura)
+        await client.get(f"{campus['urls']['FIS-101']}/grade-history", headers=laura)
     ).status_code == 404
     student = campus["students"]["Ana"]["headers"]
     assert (
-        await client.get(f"/teacher/subjects/{mat}/grade-history", headers=student)
+        await client.get(f"{campus['urls']['MAT-101']}/grade-history", headers=student)
     ).status_code == 403
 
     coord = await login_as(Role.COORDINATOR, email="coordina@uni.edu")

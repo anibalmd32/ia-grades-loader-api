@@ -129,11 +129,13 @@ async def list_subjects(
 async def subject_counts(db: AsyncSession, subject_ids: list[int]) -> dict[int, tuple[int, int]]:
     """(profesores, estudiantes) de cada materia, en dos consultas para todo el listado."""
     counts = []
-    for model in (TeacherSubject, Enrollment):
+    # Un profesor puede impartir la materia en varias secciones: se cuenta una vez
+    for column, counted in (
+        (TeacherSubject.subject_id, func.count(TeacherSubject.teacher_id.distinct())),
+        (Enrollment.subject_id, func.count()),
+    ):
         rows = await db.execute(
-            select(model.subject_id, func.count())
-            .where(model.subject_id.in_(subject_ids))
-            .group_by(model.subject_id)
+            select(column, counted).where(column.in_(subject_ids)).group_by(column)
         )
         counts.append(dict(rows.all()))
     teachers, students = counts

@@ -1,4 +1,6 @@
-"""Vistas del profesor: sus materias, sus estudiantes y la carga de notas."""
+"""Vistas del profesor: sus materias (en cada sección que imparte), sus estudiantes y la
+carga de notas. Cada materia se trabaja por sección: el profesor solo ve a los estudiantes
+de las secciones en las que la imparte."""
 
 from typing import Annotated
 
@@ -17,8 +19,8 @@ from fastapi import (
 from app.api.deps import DbSession, require_roles
 from app.core.config import get_settings
 from app.core.errors import InvalidDataError
-from app.models import Role, User
-from app.schemas.academic import SubjectRead
+from app.models import Role, Section, Subject, User
+from app.schemas.academic import SectionRead, SubjectRead
 from app.schemas.common import Page
 from app.schemas.grades import (
     GradeChangeRead,
@@ -45,21 +47,26 @@ from app.worker import notify_new_job
 router = APIRouter(prefix="/teacher", tags=["Profesor"])
 
 Teacher = Annotated[User, Depends(require_roles(Role.TEACHER))]
+CLASS = "/subjects/{subject_id}/sections/{section_id}"
 
 
 async def _rules_for(db: DbSession, subject) -> rules.GradingRules:
     return rules.for_semester(await rules.get_rules(db), subject.semester)
 
 
-async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
-    roster = await grades.subject_roster(db, subject.id, await _rules_for(db, subject))
+async def _subject_grades(db: DbSession, subject: Subject, section: Section) -> SubjectGrades:
+    roster = await grades.subject_roster(db, subject.id, section.id, await _rules_for(db, subject))
     return SubjectGrades(
         subject=SubjectRead.model_validate(subject),
-        computed_terms=sorted(await evaluations.computed_terms(db, subject.id)),
+        section=SectionRead.model_validate(section),
+        computed_terms=sorted(await evaluations.computed_terms(db, subject.id, section.id)),
         students=[
             StudentGrades(
                 student=StudentSummary.model_validate(row.student),
-                grades=[TermGrade(term=t, value=v) for t, v in row.grades.items()],
+                grades=[
+                    TermGrade(term=t, value=v, absent=t in row.absent)
+                    for t, v in row.grades.items()
+                ],
                 average=row.average,
                 final_grade=row.final_grade,
                 passed=row.passed,
@@ -71,87 +78,102 @@ async def _subject_grades(db: DbSession, subject) -> SubjectGrades:
 
 @router.get("/subjects", summary="Mis materias")
 async def my_subjects(teacher: Teacher, db: DbSession) -> list[TeacherSubject]:
-    """Materias asignadas con el número de estudiantes y de notas cargadas por lapso."""
+    """Materias asignadas, una por cada sección en la que las imparte, con el número de
+    estudiantes de la sección y de notas cargadas por lapso."""
     rows = await grades.teacher_subjects_with_counts(db, teacher.id)
     current = await rules.get_rules(db)
     per_term = await grades.grades_per_term(
-        db, {subject.id: rules.for_semester(current, subject.semester) for subject, _ in rows}
+        db,
+        {
+            (subject.id, section.id): rules.for_semester(current, subject.semester)
+            for subject, section, _ in rows
+        },
     )
     return [
         TeacherSubject(
             **{
                 **SubjectRead.model_validate(subject).model_dump(),
+                "section": SectionRead.model_validate(section),
                 "students_count": count,
-                "grades_count": per_term[subject.id],
+                "grades_count": per_term[(subject.id, section.id)],
             }
         )
-        for subject, count in rows
+        for subject, section, count in rows
     ]
 
 
-@router.get("/subjects/{subject_id}/grades", summary="Estudiantes y notas de una materia")
-async def subject_grades(subject_id: int, teacher: Teacher, db: DbSession) -> SubjectGrades:
-    """Lista los estudiantes matriculados con su nota de cada lapso (null si falta)."""
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
-    return await _subject_grades(db, subject)
-
-
-@router.put("/subjects/{subject_id}/grades", summary="Cargar o corregir notas")
-async def save_subject_grades(
-    subject_id: int, data: GradesUpdate, teacher: Teacher, db: DbSession
+@router.get(CLASS + "/grades", summary="Estudiantes y notas de una materia en una sección")
+async def subject_grades(
+    subject_id: int, section_id: int, teacher: Teacher, db: DbSession
 ) -> SubjectGrades:
-    """Envía solo las notas que cambian. `value: null` borra la nota de ese lapso.
+    """Lista los estudiantes de la sección matriculados en la materia con su nota de cada
+    lapso (null si falta; `absent` si fue inasistente)."""
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
+    return await _subject_grades(db, subject, section)
 
-    Es todo o nada: si algún estudiante no está matriculado (404) o alguna nota o lapso no
-    cumple la configuración académica (422) no se guarda ninguna. Si el periodo de la
-    materia está cerrado responde 409.
+
+@router.put(CLASS + "/grades", summary="Cargar o corregir notas")
+async def save_subject_grades(
+    subject_id: int, section_id: int, data: GradesUpdate, teacher: Teacher, db: DbSession
+) -> SubjectGrades:
+    """Envía solo las notas que cambian. `value: null` borra la nota de ese lapso y
+    `absent: true` (sin `value`) marca al estudiante como inasistente (cuenta con la nota
+    mínima). En un lapso con plan de evaluación solo se puede marcar inasistente: lo queda
+    en cada evaluación del lapso.
+
+    Es todo o nada: si algún estudiante no está matriculado en la sección (404) o alguna
+    nota o lapso no cumple la configuración académica (422) no se guarda ninguna. Si el
+    periodo de la materia está cerrado responde 409.
 
     Cada estudiante con notas nuevas o corregidas recibe un aviso (`/student/notifications`).
 
     Si las notas salen de una importación, envía su `import_job_id` para marcarla como
     confirmada (debe ser de esta materia y estar en `done`; si no, 409).
     """
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     await academic.ensure_open(db, subject.semester)
     if data.import_job_id is not None:
-        await import_jobs.mark_confirmed(db, teacher.id, subject.id, data.import_job_id)
+        await import_jobs.mark_confirmed(db, teacher.id, subject.id, section.id, data.import_job_id)
     subject_rules = await _rules_for(db, subject)
     updates = await grades.save_grades(
         db,
         subject.id,
-        [(g.student_id, g.term, g.value) for g in data.grades],
+        section.id,
+        [(g.student_id, g.term, g.value, g.absent) for g in data.grades],
         updated_by_id=teacher.id,
         rules=subject_rules,
         import_job_id=data.import_job_id,
     )
     created = await notifications.notify_grade_updates(db, subject, updates, subject_rules)
     await notifications.commit_and_publish(db, created)
-    return await _subject_grades(db, subject)
+    return await _subject_grades(db, subject, section)
 
 
 @router.get(
-    "/subjects/{subject_id}/grades/export",
+    CLASS + "/grades/export",
     summary="Descargar las notas de la materia en Excel",
     response_class=Response,
     responses={200: {"content": {grade_export.XLSX: {}}, "description": "Archivo .xlsx"}},
 )
-async def export_subject_grades(subject_id: int, teacher: Teacher, db: DbSession) -> Response:
+async def export_subject_grades(
+    subject_id: int, section_id: int, teacher: Teacher, db: DbSession
+) -> Response:
     """Hoja «Planilla» con la nota de cada lapso, el promedio, la definitiva y la situación
-    de cada estudiante, y una hoja más por cada lapso con plan de evaluación (notas de cada
-    evaluación, acumulado y nota del lapso). También en periodos cerrados."""
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    de cada estudiante de la sección, y una hoja más por cada lapso con plan de evaluación
+    (notas de cada evaluación, acumulado y nota del lapso). También en periodos cerrados."""
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     current = await rules.get_rules(db)
     subject_rules = rules.for_semester(current, subject.semester)
-    roster = await grades.subject_roster(db, subject.id, subject_rules)
+    roster = await grades.subject_roster(db, subject.id, section.id, subject_rules)
     term_plans = {
-        term: await evaluations.term_sheet(db, subject.id, term, subject_rules)
-        for term in sorted(await evaluations.computed_terms(db, subject.id))
+        term: await evaluations.term_sheet(db, subject.id, section.id, term, subject_rules)
+        for term in sorted(await evaluations.computed_terms(db, subject.id, section.id))
         if subject_rules.term_error(term) is None
     }
     content = grade_export.subject_workbook(
-        subject, subject_rules, roster, term_plans, current.document_label
+        subject, section, subject_rules, roster, term_plans, current.document_label
     )
-    name = grade_export.file_name(subject, subject_rules)
+    name = grade_export.file_name(subject, section, subject_rules)
     return Response(
         content,
         media_type=grade_export.XLSX,
@@ -159,20 +181,22 @@ async def export_subject_grades(subject_id: int, teacher: Teacher, db: DbSession
     )
 
 
-@router.get("/subjects/{subject_id}/grade-history", summary="Historial de cambios de notas")
+@router.get(CLASS + "/grade-history", summary="Historial de cambios de notas")
 async def subject_grade_history(
     subject_id: int,
+    section_id: int,
     teacher: Teacher,
     db: DbSession,
     student_id: Annotated[int | None, Query(description="Solo los de este estudiante")] = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> Page[GradeChangeRead]:
-    """Altas, correcciones y borrados de notas de la materia, del más reciente al más
-    antiguo, con quién los hizo y si fueron a mano o desde una importación de Excel."""
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    """Altas, correcciones y borrados de notas de la materia en la sección, del más
+    reciente al más antiguo, con quién los hizo y si fueron a mano o desde una importación de
+    Excel."""
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     items, total = await grades.history(
-        db, subject.id, student_id=student_id, limit=limit, offset=offset
+        db, subject.id, student_id=student_id, limit=limit, offset=offset, section_id=section.id
     )
     return Page(
         items=[GradeChangeRead.from_row(*row) for row in items],
@@ -183,12 +207,13 @@ async def subject_grade_history(
 
 
 @router.post(
-    "/subjects/{subject_id}/grades/import",
+    CLASS + "/grades/import",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Encolar la lectura de un Excel de notas (IA)",
 )
 async def enqueue_grades_import(
     subject_id: int,
+    section_id: int,
     teacher: Teacher,
     db: DbSession,
     file: Annotated[UploadFile, File(description="Planilla .xlsx de la materia")],
@@ -201,10 +226,12 @@ async def enqueue_grades_import(
     archivo en segundo plano. Consulta `GET /teacher/import-jobs/{job_id}` hasta que
     `status` sea `done` (o `failed`).
 
-    El resultado es una previsualización: **no se guarda nada**. Envía las filas que
-    quieras guardar (ok o warning, ya corregidas) a `PUT /teacher/subjects/{id}/grades`.
+    El resultado es una previsualización con los estudiantes de la sección: **no se guarda
+    nada**. Envía las filas que quieras guardar (ok o warning, ya corregidas) a
+    `PUT /teacher/subjects/{id}/sections/{section_id}/grades`. Las celdas «I», «NP»,
+    «Inasistente»... se leen como inasistencias.
     """
-    subject = await grades.get_teacher_subject(db, teacher.id, subject_id)
+    subject, section = await grades.get_teacher_subject(db, teacher.id, subject_id, section_id)
     await academic.ensure_open(db, subject.semester)
     if default_term is not None:
         problem = (await _rules_for(db, subject)).term_error(default_term)
@@ -219,7 +246,8 @@ async def enqueue_grades_import(
     job = await import_jobs.enqueue(
         db,
         teacher_id=teacher.id,
-        subject_id=subject_id,
+        subject_id=subject.id,
+        section_id=section.id,
         file_name=file.filename or "planilla.xlsx",
         content=content,
         default_term=default_term,
@@ -233,9 +261,10 @@ async def list_import_jobs(
     teacher: Teacher,
     db: DbSession,
     subject_id: int | None = None,
+    section_id: int | None = None,
     limit: Annotated[int, Query(ge=1, le=50)] = 20,
 ) -> list[ImportJobSummary]:
-    jobs = await import_jobs.list_jobs(db, teacher.id, subject_id, limit)
+    jobs = await import_jobs.list_jobs(db, teacher.id, subject_id, limit, section_id)
     return [ImportJobSummary.model_validate(j) for j in jobs]
 
 

@@ -4,10 +4,17 @@ from typing import Annotated
 from pydantic import AfterValidator, BaseModel, BeforeValidator, ConfigDict, Field
 
 from app.schemas.settings import GradingRulesRead
+from app.schemas.user import UserRead
 from app.services.rules import DEFAULT_RULES, from_snapshot
 
 Name = Annotated[str, AfterValidator(str.strip), Field(min_length=1, max_length=150)]
 SemesterName = Annotated[str, AfterValidator(str.strip), Field(min_length=1, max_length=50)]
+# Nombres de sección normalizados: sin espacios alrededor y en mayúsculas (p. ej. A, 01)
+SectionName = Annotated[
+    str,
+    AfterValidator(lambda v: v.strip().upper()),
+    Field(min_length=1, max_length=20, examples=["A"]),
+]
 # Códigos de materia normalizados: sin espacios alrededor y en mayúsculas (p. ej. MAT-101)
 SubjectCode = Annotated[
     str,
@@ -85,10 +92,64 @@ class SubjectRead(BaseModel):
     )
 
 
-class TeacherSubjectsUpdate(BaseModel):
-    subject_ids: list[int] = Field(
-        description="Conjunto completo de materias del profesor (reemplaza el anterior)"
+class SectionCreate(BaseModel):
+    name: SectionName
+
+
+class SectionUpdate(BaseModel):
+    name: SectionName
+
+
+class SectionRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    semester_id: int
+    students_count: int | None = Field(
+        default=None, description="Estudiantes asignados." + COUNT_NOTE
     )
+
+
+class StudentSectionRead(SectionRead):
+    semester: SemesterRead
+
+
+class SectionStudentsRequest(BaseModel):
+    student_ids: list[int] = Field(
+        min_length=1,
+        description="Estudiantes a asignar. Si ya estaban en otra sección del periodo, se "
+        "cambian (salvo que ya tengan notas en el periodo: 409)",
+    )
+
+
+class SectionStudentsResult(BaseModel):
+    added: int = Field(description="Asignados por primera vez en el periodo")
+    moved: int = Field(description="Cambiados desde otra sección del periodo")
+    already_in_section: int = Field(description="Ya estaban en la sección")
+
+
+class TeacherAssignment(BaseModel):
+    subject_id: int
+    section_id: int
+
+
+class TeacherSubjectsUpdate(BaseModel):
+    assignments: list[TeacherAssignment] = Field(
+        description="Conjunto completo de (materia, sección) que imparte el profesor (reemplaza "
+        "el anterior). Cada materia tiene un solo profesor por sección: si otro ya la imparte "
+        "en esa sección responde 409"
+    )
+
+
+class TeacherAssignmentRead(BaseModel):
+    subject: SubjectRead
+    section: SectionRead
+
+
+class SubjectTeacherRead(BaseModel):
+    section: SectionRead
+    teacher: UserRead
 
 
 class EnrollSubjectsRequest(BaseModel):

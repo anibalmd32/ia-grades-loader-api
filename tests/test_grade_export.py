@@ -21,15 +21,14 @@ async def download(client, url, headers):
 
 
 async def test_descarga_la_planilla_de_la_materia(client, campus):
-    mat = campus["subjects"]["MAT-101"]
     pedro = campus["teachers"]["Pedro Profe"]
-    response, workbook = await download(
-        client, f"/teacher/subjects/{mat['id']}/grades/export", pedro
+    response, workbook = await download(client, f"{campus['urls']['MAT-101']}/grades/export", pedro)
+    assert (
+        'filename="notas-mat-101-2026-i-seccion-a.xlsx"' in response.headers["content-disposition"]
     )
-    assert 'filename="notas-mat-101-2026-i.xlsx"' in response.headers["content-disposition"]
     assert workbook.sheetnames == ["Planilla"]
     sheet = workbook["Planilla"]
-    assert sheet["A1"].value == "MAT-101 · Mate I — Semestre 2026-I"
+    assert sheet["A1"].value == "MAT-101 · Mate I — Sección A — Semestre 2026-I"
     headers, rows = table(sheet)
     assert headers == [
         "Cédula", "Apellido", "Nombre", "Lapso 1", "Lapso 2", "Lapso 3",
@@ -43,27 +42,26 @@ async def test_descarga_la_planilla_de_la_materia(client, campus):
 
 
 async def test_incluye_una_hoja_por_lapso_con_plan(client, campus):
-    mat = campus["subjects"]["MAT-101"]
     pedro = campus["teachers"]["Pedro Profe"]
     ana = campus["students"]["Ana"]["id"]
     examen = (
         await client.post(
-            f"/teacher/subjects/{mat['id']}/evaluations",
+            f"{campus['urls']['MAT-101']}/evaluations",
             json={"term": 3, "name": "Examen", "weight": 60},
             headers=pedro,
         )
     ).json()
     await client.post(
-        f"/teacher/subjects/{mat['id']}/evaluations",
+        f"{campus['urls']['MAT-101']}/evaluations",
         json={"term": 3, "name": "Taller", "weight": 40},
         headers=pedro,
     )
     await client.put(
-        f"/teacher/subjects/{mat['id']}/terms/3/evaluation-grades",
+        f"{campus['urls']['MAT-101']}/terms/3/evaluation-grades",
         json={"grades": [{"student_id": ana, "evaluation_id": examen["id"], "value": 15}]},
         headers=pedro,
     )
-    _, workbook = await download(client, f"/teacher/subjects/{mat['id']}/grades/export", pedro)
+    _, workbook = await download(client, f"{campus['urls']['MAT-101']}/grades/export", pedro)
     assert workbook.sheetnames == ["Planilla", "Lapso 3"]
     headers, rows = table(workbook["Lapso 3"])
     assert headers == [
@@ -74,42 +72,43 @@ async def test_incluye_una_hoja_por_lapso_con_plan(client, campus):
 
     # El mismo lapso por separado
     response, single = await download(
-        client, f"/teacher/subjects/{mat['id']}/terms/3/evaluation-grades/export", pedro
+        client, f"{campus['urls']['MAT-101']}/terms/3/evaluation-grades/export", pedro
     )
-    assert 'filename="notas-mat-101-2026-i-lapso-3.xlsx"' in response.headers["content-disposition"]
+    assert (
+        'filename="notas-mat-101-2026-i-seccion-a-lapso-3.xlsx"'
+        in response.headers["content-disposition"]
+    )
     assert single.sheetnames == ["Lapso 3"]
     assert "Plan de evaluación al 100 %" in single["Lapso 3"]["A2"].value
     assert table(single["Lapso 3"]) == (headers, rows)
 
 
 async def test_lapso_sin_plan_y_validaciones(client, campus, login_as):
-    mat = campus["subjects"]["MAT-101"]["id"]
     pedro = campus["teachers"]["Pedro Profe"]
     _, workbook = await download(
-        client, f"/teacher/subjects/{mat}/terms/1/evaluation-grades/export", pedro
+        client, f"{campus['urls']['MAT-101']}/terms/1/evaluation-grades/export", pedro
     )
     headers, rows = table(workbook.active)
     assert headers == ["Cédula", "Apellido", "Nombre", "Acumulado", "Lapso 1"]
     assert len(rows) == 2
 
     bad_term = await client.get(
-        f"/teacher/subjects/{mat}/terms/9/evaluation-grades/export", headers=pedro
+        f"{campus['urls']['MAT-101']}/terms/9/evaluation-grades/export", headers=pedro
     )
     assert bad_term.status_code == 422
     other = await login_as(Role.TEACHER, email="otro@uni.edu")
     assert (
-        await client.get(f"/teacher/subjects/{mat}/grades/export", headers=other)
+        await client.get(f"{campus['urls']['MAT-101']}/grades/export", headers=other)
     ).status_code == 404
     student = campus["students"]["Ana"]["headers"]
     assert (
-        await client.get(f"/teacher/subjects/{mat}/grades/export", headers=student)
+        await client.get(f"{campus['urls']['MAT-101']}/grades/export", headers=student)
     ).status_code == 403
 
 
 async def test_el_front_puede_leer_el_nombre_del_archivo(client, campus):
-    mat = campus["subjects"]["MAT-101"]["id"]
     response = await client.get(
-        f"/teacher/subjects/{mat}/grades/export",
+        f"{campus['urls']['MAT-101']}/grades/export",
         headers={**campus["teachers"]["Pedro Profe"], "Origin": "http://localhost:1420"},
     )
     exposed = response.headers["access-control-expose-headers"].lower()

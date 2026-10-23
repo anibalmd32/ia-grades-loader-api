@@ -70,6 +70,7 @@ async def import_students(
             nationality=r.nationality,
             cedula=r.cedula,
             subject_codes=r.subject_codes,
+            section=r.section,
             status=r.status,
             issues=r.issues,
             user=None if dry_run or r.user is None else UserRead.model_validate(r.user),

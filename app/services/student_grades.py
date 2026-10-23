@@ -14,7 +14,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFoundError
-from app.models import Enrollment, Evaluation, Grade, Semester, Subject, TeacherSubject, User
+from app.models import (
+    Enrollment,
+    Evaluation,
+    Grade,
+    Section,
+    Semester,
+    StudentSection,
+    Subject,
+    TeacherSubject,
+    User,
+)
 from app.services.evaluations import student_evaluations
 from app.services.rules import GradingRules, for_semester
 
@@ -56,11 +66,14 @@ def project(grades: dict[int, Decimal | None], rules: GradingRules) -> Projectio
 @dataclass
 class SubjectGrades:
     subject: Subject
-    teachers: list[str]
+    section: Section | None  # sección del estudiante en el periodo de la materia
+    teacher: str | None  # profesor de la materia en esa sección (uno solo)
     grades: dict[int, Decimal | None]  # lapso -> nota
     rules: GradingRules
-    # Plan de evaluación de la materia con la nota del estudiante en cada evaluación
-    evaluations: list[tuple[Evaluation, Decimal | None]] = field(default_factory=list)
+    # Plan de evaluación de la materia en su sección con la nota del estudiante en cada
+    # evaluación y si fue inasistente
+    evaluations: list[tuple[Evaluation, Decimal | None, bool]] = field(default_factory=list)
+    absent: set[int] = field(default_factory=set)  # lapsos en los que es inasistente
 
     @property
     def average(self) -> Decimal | None:
@@ -79,9 +92,21 @@ async def student_subjects(
     `rules` son las vigentes; cada materia se evalúa con las de su periodo (pueden estar
     congeladas si el periodo se cerró)."""
     query = (
-        select(Enrollment.id, Subject)
+        select(Enrollment.id, Subject, Section, User.full_name)
         .join(Subject, Subject.id == Enrollment.subject_id)
         .join(Semester, Semester.id == Subject.semester_id)
+        .outerjoin(
+            StudentSection,
+            (StudentSection.student_id == Enrollment.student_id)
+            & (StudentSection.semester_id == Subject.semester_id),
+        )
+        .outerjoin(Section, Section.id == StudentSection.section_id)
+        .outerjoin(
+            TeacherSubject,
+            (TeacherSubject.subject_id == Subject.id)
+            & (TeacherSubject.section_id == StudentSection.section_id),
+        )
+        .outerjoin(User, User.id == TeacherSubject.teacher_id)
         .where(Enrollment.student_id == student_id)
         .order_by(Semester.name, Subject.code)
     )
@@ -91,37 +116,33 @@ async def student_subjects(
     if not enrollments:
         return []
 
+    enrollment_ids = [row[0] for row in enrollments]
     grades: dict[int, dict[int, Decimal]] = defaultdict(dict)
+    absent: dict[int, set[int]] = defaultdict(set)
     rows = await db.execute(
-        select(Grade.enrollment_id, Grade.term, Grade.value).where(
-            Grade.enrollment_id.in_([e for e, _ in enrollments])
+        select(Grade.enrollment_id, Grade.term, Grade.value, Grade.absent).where(
+            Grade.enrollment_id.in_(enrollment_ids)
         )
     )
-    for enrollment_id, term, value in rows:
+    for enrollment_id, term, value, is_absent in rows:
         grades[enrollment_id][term] = value
+        if is_absent:
+            absent[enrollment_id].add(term)
 
-    teachers: dict[int, list[str]] = defaultdict(list)
-    rows = await db.execute(
-        select(TeacherSubject.subject_id, User.full_name)
-        .join(User, User.id == TeacherSubject.teacher_id)
-        .where(TeacherSubject.subject_id.in_([s.id for _, s in enrollments]))
-        .order_by(User.last_name, User.first_name)
-    )
-    for sid, name in rows:
-        teachers[sid].append(name)
-
-    plans = await student_evaluations(db, [e for e, _ in enrollments])
+    plans = await student_evaluations(db, enrollment_ids)
 
     result = []
-    for enrollment_id, subject in enrollments:
+    for enrollment_id, subject, section, teacher in enrollments:
         subject_rules = for_semester(rules, subject.semester)
         result.append(
             SubjectGrades(
                 subject=subject,
-                teachers=teachers[subject.id],
+                section=section,
+                teacher=teacher,
                 grades={t: grades[enrollment_id].get(t) for t in subject_rules.terms},
                 rules=subject_rules,
                 evaluations=plans.get(enrollment_id, []),
+                absent=absent[enrollment_id],
             )
         )
     return result

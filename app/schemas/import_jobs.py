@@ -17,6 +17,7 @@ class ImportJobSummary(BaseModel):
 
     id: str
     subject_id: int
+    section_id: int
     file_name: str
     status: JobStatus = Field(
         description="pending = en cola; processing = la IA lo está leyendo; "
@@ -31,7 +32,8 @@ class ImportJobSummary(BaseModel):
     )
     confirmed_at: UtcDatetime | None = Field(
         description="Cuándo se guardaron las notas de esta importación; null = sin confirmar. "
-        "Se marca al enviar `import_job_id` en `PUT /teacher/subjects/{id}/grades`"
+        "Se marca al enviar `import_job_id` en "
+        "`PUT /teacher/subjects/{id}/sections/{section_id}/grades`"
     )
 
 

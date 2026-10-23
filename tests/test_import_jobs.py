@@ -15,7 +15,9 @@ from app.models import (
     JobStatus,
     Nationality,
     Role,
+    Section,
     Semester,
+    StudentSection,
     Subject,
     TeacherSubject,
     User,
@@ -60,10 +62,13 @@ async def file_sessionmaker(tmp_path):
     await engine.dispose()
 
 
-async def seed_course(sessionmaker) -> tuple[int, int]:
-    """Profesor con MAT-101 y la estudiante V-1 matriculada. Devuelve (profesor, materia)."""
+async def seed_course(sessionmaker) -> tuple[int, int, int]:
+    """Profesor con MAT-101 en la sección A y la estudiante V-1 de esa sección matriculada.
+    Devuelve (profesor, materia, sección)."""
     async with sessionmaker() as db:
-        subject = Subject(code="MAT-101", name="Matemática I", semester=Semester(name="2026-I"))
+        semester = Semester(name="2026-I")
+        section = Section(semester=semester, name="A")
+        subject = Subject(code="MAT-101", name="Matemática I", semester=semester)
         teacher = User(role=Role.TEACHER, **names("Pedro"), email="p@uni.edu", password_hash="x")
         ana = User(
             role=Role.STUDENT,
@@ -72,20 +77,21 @@ async def seed_course(sessionmaker) -> tuple[int, int]:
             cedula=1,
             password_hash="x",
         )
-        db.add_all([subject, teacher, ana])
+        db.add_all([section, subject, teacher, ana])
         await db.flush()
         db.add_all(
             [
-                TeacherSubject(teacher_id=teacher.id, subject_id=subject.id),
+                TeacherSubject(teacher_id=teacher.id, subject_id=subject.id, section_id=section.id),
+                StudentSection(student_id=ana.id, semester_id=semester.id, section_id=section.id),
                 Enrollment(student_id=ana.id, subject_id=subject.id),
             ]
         )
         await db.commit()
-        return teacher.id, subject.id
+        return teacher.id, subject.id, section.id
 
 
 async def test_worker_procesa_la_cola_en_paralelo_sin_duplicar(file_sessionmaker):
-    teacher_id, subject_id = await seed_course(file_sessionmaker)
+    teacher_id, subject_id, section_id = await seed_course(file_sessionmaker)
     fake = FakeLLM({"grades": [entry(cedula="V-1", term=1, value=15)]})
     job_ids = []
     async with file_sessionmaker() as db:
@@ -94,6 +100,7 @@ async def test_worker_procesa_la_cola_en_paralelo_sin_duplicar(file_sessionmaker
                 db,
                 teacher_id=teacher_id,
                 subject_id=subject_id,
+                section_id=section_id,
                 file_name=f"notas-{n}.xlsx",
                 content=SAMPLE,
                 default_term=None,
@@ -185,7 +192,7 @@ async def test_listado_y_privacidad(client, course, login_as):
 
 async def test_resumen_incluye_intentos_y_confirmacion(client, course, sessionmaker):
     job_id = (await upload(client, course)).json()["id"]
-    url = f"/teacher/subjects/{course['subject_id']}/grades"
+    url = f"{course['url']}/grades"
     ana = course["students"]["Ana Pérez"]
     body = {"grades": [{"student_id": ana, "term": 1, "value": 15}], "import_job_id": job_id}
 
@@ -220,7 +227,7 @@ async def test_resumen_incluye_intentos_y_confirmacion(client, course, sessionma
 
 
 async def test_guardar_notas_sin_importacion_sigue_igual(client, course):
-    url = f"/teacher/subjects/{course['subject_id']}/grades"
+    url = f"{course['url']}/grades"
     ana = course["students"]["Ana Pérez"]
     response = await client.put(
         url,
@@ -237,4 +244,10 @@ async def test_no_confirma_importaciones_de_otra_materia(client, course, session
         job.status = JobStatus.DONE
         await db.commit()
         with pytest.raises(ConflictError, match="otra materia"):
-            await mark_confirmed(db, job.teacher_id, course["subject_id"] + 1, job_id)
+            await mark_confirmed(
+                db, job.teacher_id, course["subject_id"] + 1, course["section_id"], job_id
+            )
+        with pytest.raises(ConflictError, match="otra materia o sección"):
+            await mark_confirmed(
+                db, job.teacher_id, course["subject_id"], course["section_id"] + 1, job_id
+            )

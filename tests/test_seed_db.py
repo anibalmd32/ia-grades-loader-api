@@ -71,6 +71,9 @@ async def test_demo_del_estudiante(client, seeded):
         "PRO-102": "passed",
     }
     assert body["average"] == 13.34  # el que menciona la conversación de ejemplo
+    # Un solo profesor por materia: el de su sección (Ricardo da MAT-102 en la B)
+    mat102 = next(s for s in body["subjects"] if s["subject"]["code"] == "MAT-102")
+    assert (mat102["teacher"], mat102["section"]) == ("Carmen Rojas", "A")
     assert [s["semester"]["name"] for s in body["semesters"]] == ["2025-II", "2026-I"]
 
     conversations = (await client.get("/student/conversations", headers=headers)).json()
@@ -81,10 +84,14 @@ async def test_demo_del_estudiante(client, seeded):
 async def test_demo_del_profesor(client, seeded):
     headers = await login(client, email="profesor@demo.edu")
     subjects = (await client.get("/teacher/subjects", headers=headers)).json()
-    assert [s["code"] for s in subjects] == ["MAT-101", "MAT-102"]
+    assert [(s["code"], s["section"]["name"]) for s in subjects] == [
+        ("MAT-101", "A"),
+        ("MAT-101", "B"),
+        ("MAT-102", "A"),
+    ]
     mat102 = next(s for s in subjects if s["code"] == "MAT-102")
-    assert mat102["students_count"] == 32
-    assert mat102["grades_count"] == {"1": 32, "2": 32, "3": 0}
+    assert mat102["students_count"] == 16  # solo los de su sección
+    assert mat102["grades_count"] == {"1": 16, "2": 16, "3": 0}
 
     jobs = (await client.get("/teacher/import-jobs", headers=headers)).json()
     assert [(j["status"], j["confirmed_at"] is not None) for j in jobs] == [
@@ -93,7 +100,7 @@ async def test_demo_del_profesor(client, seeded):
         ("failed", False),
     ]
     pending = (await client.get(f"/teacher/import-jobs/{jobs[0]['id']}", headers=headers)).json()
-    assert pending["result"]["summary"] == {"ok": 28, "warning": 1, "error": 2}
+    assert pending["result"]["summary"] == {"ok": 12, "warning": 1, "error": 2}
     assert len(pending["result"]["students_without_grades"]) == 2
 
 
@@ -110,7 +117,15 @@ async def test_demo_de_administracion(client, seeded):
     assert sum(not s["is_active"] for s in students["items"]) == 1
     assert sum(s["nationality"] == "E" for s in students["items"]) == 4
     teachers = (await client.get("/teachers", headers=coord)).json()["items"]
-    assert all(t["subjects_count"] == 2 for t in teachers)
+    # Materias por sección que imparte cada profesor
+    assert {t["email"]: t["subjects_count"] for t in teachers} == {
+        "profesor@demo.edu": 3,
+        "luis.fernandez@demo.edu": 4,
+        "mariana.salazar@demo.edu": 4,
+        "jose.gutierrez@demo.edu": 3,
+        "andreina.blanco@demo.edu": 4,
+        "ricardo.mendez@demo.edu": 2,
+    }
 
 
 async def test_profesor_con_contrasena_inicial(client, seeded):
@@ -170,13 +185,13 @@ async def test_historial_de_notas_de_demo(client, seeded, session):
     fis102 = next(
         s
         for s in (await client.get("/teacher/subjects", headers=headers)).json()
-        if s["code"] == "FIS-102"
+        if s["code"] == "FIS-102" and s["section"]["name"] == "A"
     )
     me = await login(client, nationality="V", cedula=12345678)
     student_id = (await client.get("/auth/me", headers=me)).json()["id"]
     history = (
         await client.get(
-            f"/teacher/subjects/{fis102['id']}/grade-history",
+            f"/teacher/subjects/{fis102['id']}/sections/{fis102['section']['id']}/grade-history",
             params={"student_id": student_id},
             headers=headers,
         )
@@ -189,17 +204,14 @@ async def test_historial_de_notas_de_demo(client, seeded, session):
 
 
 async def test_demo_de_evaluaciones(client, seeded):
-    assert seeded.evaluations == 6
+    assert seeded.evaluations == 9  # MAT-102 A y el mismo plan de ING-101 en A y en B
     headers = await login(client, email="profesor@demo.edu")
     subjects = (await client.get("/teacher/subjects", headers=headers)).json()
     mat102 = next(s for s in subjects if s["code"] == "MAT-102")
-    plan = await client.get(f"/teacher/subjects/{mat102['id']}/evaluations", headers=headers)
+    base = f"/teacher/subjects/{mat102['id']}/sections/{mat102['section']['id']}"
+    plan = await client.get(f"{base}/evaluations", headers=headers)
     assert [t["complete"] for t in plan.json()["terms"]] == [True, False, False]
-    sheet = (
-        await client.get(
-            f"/teacher/subjects/{mat102['id']}/terms/1/evaluation-grades", headers=headers
-        )
-    ).json()
+    sheet = (await client.get(f"{base}/terms/1/evaluation-grades", headers=headers)).json()
     assert all(s["term_grade"] is not None for s in sheet["students"])
 
     me = await login(client, nationality="V", cedula=12345678)

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.ai.client import LLMClient
 from app.core.config import get_settings
 from app.core.errors import AppError, ConflictError, NotFoundError
-from app.models import ImportJob, JobStatus, Subject, TeacherSubject
+from app.models import ImportJob, JobStatus, Section, Subject, TeacherSubject
 from app.models.import_job import ACTIVE_STATUSES, utcnow
 from app.services import grade_import
 
@@ -36,6 +36,7 @@ async def enqueue(
     *,
     teacher_id: int,
     subject_id: int,
+    section_id: int,
     file_name: str,
     content: bytes,
     default_term: int | None,
@@ -57,6 +58,7 @@ async def enqueue(
     job = ImportJob(
         teacher_id=teacher_id,
         subject_id=subject_id,
+        section_id=section_id,
         file_name=file_name[:255],
         file_content=content,
         default_term=default_term,
@@ -67,11 +69,12 @@ async def enqueue(
 
 
 def _still_assigned(teacher_id: int):
-    """El profesor sigue asignado a la materia de la importación: si se la quitan, deja de
-    ver sus importaciones (traen la lista de estudiantes y sus notas)."""
+    """El profesor sigue asignado a la materia y sección de la importación: si se la quitan,
+    deja de ver sus importaciones (traen la lista de estudiantes y sus notas)."""
     return exists().where(
         TeacherSubject.teacher_id == teacher_id,
         TeacherSubject.subject_id == ImportJob.subject_id,
+        TeacherSubject.section_id == ImportJob.section_id,
     )
 
 
@@ -89,13 +92,13 @@ async def get_job(db: AsyncSession, teacher_id: int, job_id: str) -> ImportJob:
 
 
 async def mark_confirmed(
-    db: AsyncSession, teacher_id: int, subject_id: int, job_id: str
+    db: AsyncSession, teacher_id: int, subject_id: int, section_id: int, job_id: str
 ) -> ImportJob:
     """Marca la importación como confirmada. No hace commit: se guarda junto con las notas
     (si guardar las notas falla, la importación sigue sin confirmar)."""
     job = await get_job(db, teacher_id, job_id)
-    if job.subject_id != subject_id:
-        raise ConflictError("La importación es de otra materia")
+    if (job.subject_id, job.section_id) != (subject_id, section_id):
+        raise ConflictError("La importación es de otra materia o sección")
     if job.status != JobStatus.DONE:
         raise ConflictError("La importación aún no tiene una previsualización lista")
     job.confirmed_at = utcnow()
@@ -103,11 +106,17 @@ async def mark_confirmed(
 
 
 async def list_jobs(
-    db: AsyncSession, teacher_id: int, subject_id: int | None, limit: int
+    db: AsyncSession,
+    teacher_id: int,
+    subject_id: int | None,
+    limit: int,
+    section_id: int | None = None,
 ) -> list[ImportJob]:
     query = select(ImportJob).where(ImportJob.teacher_id == teacher_id, _still_assigned(teacher_id))
     if subject_id is not None:
         query = query.where(ImportJob.subject_id == subject_id)
+    if section_id is not None:
+        query = query.where(ImportJob.section_id == section_id)
     query = query.order_by(ImportJob.created_at.desc()).limit(limit)
     return list(await db.scalars(query))
 
@@ -171,10 +180,11 @@ async def process_job(
         async with sessionmaker() as db:
             job = await db.get(ImportJob, job_id)
             subject = await db.get(Subject, job.subject_id)
+            section = await db.get(Section, job.section_id)
             preview = await grade_import.preview_import(
-                db, llm, subject, job.file_content or b"", job.default_term
+                db, llm, subject, section, job.file_content or b"", job.default_term
             )
-            result = grade_import.to_schema(subject, preview).model_dump(mode="json")
+            result = grade_import.to_schema(subject, section, preview).model_dump(mode="json")
     except AppError as exc:
         logger.info("Importación %s fallida: %s", job_id, exc.detail)
         await _finish(sessionmaker, job_id, error=exc.detail)

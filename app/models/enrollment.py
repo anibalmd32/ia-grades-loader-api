@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Numeric, SmallInteger, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Numeric, SmallInteger, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base, TimestampMixin
@@ -26,6 +26,10 @@ class Grade(TimestampMixin, Base):
 
     El rango del lapso y de la nota depende de la configuración académica (la valida
     app.services.rules), por eso no hay restricciones CHECK con números fijos.
+
+    Un estudiante que no se presentó queda como inasistente (`absent`): su nota cuenta como
+    la mínima de la escala, que es lo que se guarda en `value` para que promedios, definitiva
+    y proyección no necesiten un caso aparte.
     """
 
     __tablename__ = "grades"
@@ -36,6 +40,7 @@ class Grade(TimestampMixin, Base):
     term: Mapped[int] = mapped_column(SmallInteger)
     # Hasta 100 con 2 decimales (escala configurable)
     value: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    absent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     # Último usuario (profesor/coordinador) que cargó o modificó la nota
     updated_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
 

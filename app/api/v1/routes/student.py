@@ -55,13 +55,21 @@ Student = Annotated[User, Depends(require_roles(Role.STUDENT))]
 def _to_schema(item: SubjectGrades) -> StudentSubjectGrades:
     return StudentSubjectGrades(
         subject=SubjectRead.model_validate(item.subject),
-        teachers=item.teachers,
-        grades=[TermGrade(term=t, value=v) for t, v in item.grades.items()],
+        section=None if item.section is None else item.section.name,
+        teacher=item.teacher,
+        grades=[
+            TermGrade(term=t, value=v, absent=t in item.absent) for t, v in item.grades.items()
+        ],
         evaluations=[
             StudentEvaluation(
-                term=e.term, name=e.name, weight=e.weight, due_date=e.due_date, value=value
+                term=e.term,
+                name=e.name,
+                weight=e.weight,
+                due_date=e.due_date,
+                value=value,
+                absent=absent,
             )
-            for e, value in item.evaluations
+            for e, value, absent in item.evaluations
         ],
         average=item.average,
         projection=SubjectProjection.model_validate(item.projection, from_attributes=True),

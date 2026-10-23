@@ -3,8 +3,8 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, Field, model_validator
 
-from app.schemas.academic import SubjectRead
-from app.schemas.grades import GradeNumber, GradeValue, StudentSummary, Term
+from app.schemas.academic import SectionRead, SubjectRead
+from app.schemas.grades import ABSENT_NOTE, GradeNumber, GradeValue, StudentSummary, Term
 from app.schemas.settings import Weight
 
 EvaluationName = Annotated[
@@ -48,6 +48,7 @@ class TermPlan(BaseModel):
 
 class EvaluationPlan(BaseModel):
     subject: SubjectRead
+    section: SectionRead
     terms: list[TermPlan] = Field(
         description="Un elemento por lapso. Los lapsos sin evaluaciones se cargan directamente"
     )
@@ -57,6 +58,7 @@ class EvaluationPlan(BaseModel):
 class EvaluationValue(BaseModel):
     evaluation_id: int
     value: GradeValue | None = Field(description="null si aún no se ha calificado")
+    absent: bool = Field(default=False, description=ABSENT_NOTE)
 
 
 class StudentEvaluationGrades(BaseModel):
@@ -68,10 +70,14 @@ class StudentEvaluationGrades(BaseModel):
     term_grade: GradeNumber | None = Field(
         description="Nota del lapso: solo con el plan al 100 % y todo calificado"
     )
+    term_absent: bool = Field(
+        default=False, description="Inasistente en todas las evaluaciones del lapso"
+    )
 
 
 class TermEvaluationGrades(BaseModel):
     subject: SubjectRead
+    section: SectionRead
     plan: TermPlan
     evaluations: list[EvaluationRead]
     students: list[StudentEvaluationGrades]
@@ -80,7 +86,20 @@ class TermEvaluationGrades(BaseModel):
 class EvaluationGradeEntry(BaseModel):
     student_id: int
     evaluation_id: int
-    value: GradeValue | None = Field(description="null borra la nota")
+    value: GradeValue | None = Field(
+        default=None, description="null borra la nota (o va con `absent: true`)"
+    )
+    absent: bool = Field(
+        default=False,
+        description="No se presentó a la evaluación: inasistente, sin `value` (cuenta con la "
+        "nota mínima)",
+    )
+
+    @model_validator(mode="after")
+    def _absent_without_value(self) -> "EvaluationGradeEntry":
+        if self.absent and self.value is not None:
+            raise ValueError("Una nota inasistente no lleva valor")
+        return self
 
 
 class EvaluationGradesUpdate(BaseModel):

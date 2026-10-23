@@ -12,7 +12,7 @@ from pydantic import (
 )
 
 from app.models import ChangeSource
-from app.schemas.academic import SemesterRead, SubjectRead
+from app.schemas.academic import SectionRead, SemesterRead, SubjectRead
 from app.services.rules import MAX_DECIMALS, MAX_GRADE_LIMIT, MAX_TERMS
 from app.services.student_grades import Standing
 
@@ -44,6 +44,9 @@ UtcDatetime = Annotated[
 
 
 class TeacherSubject(SubjectRead):
+    """Materia que imparte el profesor en una de sus secciones (`id` es el de la materia)."""
+
+    section: SectionRead
     students_count: int
     grades_count: dict[Term, int] = Field(
         description="Notas cargadas en cada lapso (siempre todos los lapsos configurados)",
@@ -61,9 +64,13 @@ class StudentSummary(BaseModel):
     cedula_display: str | None
 
 
+ABSENT_NOTE = "Inasistente: no se presentó. Cuenta con la nota mínima de la escala (`value`)"
+
+
 class TermGrade(BaseModel):
     term: Term
     value: GradeValue | None = Field(description="null si aún no se ha cargado")
+    absent: bool = Field(default=False, description=ABSENT_NOTE)
 
 
 class StudentGrades(BaseModel):
@@ -80,6 +87,7 @@ class StudentGrades(BaseModel):
 
 class SubjectGrades(BaseModel):
     subject: SubjectRead
+    section: SectionRead
     computed_terms: list[int] = Field(
         default_factory=list,
         description="Lapsos con plan de evaluación: su nota se calcula con las evaluaciones y "
@@ -91,7 +99,21 @@ class SubjectGrades(BaseModel):
 class GradeEntry(BaseModel):
     student_id: int
     term: Term
-    value: GradeValue | None = Field(description="null borra la nota de ese lapso")
+    value: GradeValue | None = Field(
+        default=None, description="null borra la nota de ese lapso (o va con `absent: true`)"
+    )
+    absent: bool = Field(
+        default=False,
+        description="Marca al estudiante como inasistente en el lapso (sin `value`: cuenta con "
+        "la nota mínima). En un lapso con plan de evaluación lo marca inasistente en cada "
+        "evaluación",
+    )
+
+    @model_validator(mode="after")
+    def _absent_without_value(self) -> "GradeEntry":
+        if self.absent and self.value is not None:
+            raise ValueError("Una nota inasistente no lleva valor")
+        return self
 
 
 class GradesUpdate(BaseModel):
@@ -119,9 +141,13 @@ class ImportRow(BaseModel):
     student: StudentSummary | None = Field(description="Estudiante identificado, si se pudo")
     term: int | None
     value: GradeNumber | None = Field(description="Nota a guardar si es válida")
+    absent: bool = Field(
+        default=False, description="La planilla lo marca como inasistente («I», «NP»...)"
+    )
     current_value: GradeNumber | None = Field(
         description="Nota actual en el sistema (se sobrescribirá)"
     )
+    current_absent: bool = Field(default=False, description="Hoy figura como inasistente")
     status: Literal["ok", "warning", "error"] = Field(
         description="ok = lista; warning = revisar (p. ej. identificado por nombre); "
         "error = no se puede guardar"
@@ -137,6 +163,7 @@ class ImportSummary(BaseModel):
 
 class ImportPreview(BaseModel):
     subject: SubjectRead
+    section: SectionRead | None = None
     rows: list[ImportRow]
     summary: ImportSummary
     warnings: list[str] = Field(description="Observaciones generales de la IA")
@@ -168,11 +195,15 @@ class StudentEvaluation(BaseModel):
     weight: GradeNumber = Field(description="Porcentaje de la nota del lapso")
     due_date: date | None
     value: GradeNumber | None = Field(description="null si aún no se ha calificado")
+    absent: bool = Field(default=False, description=ABSENT_NOTE)
 
 
 class StudentSubjectGrades(BaseModel):
     subject: SubjectRead
-    teachers: list[str] = Field(description="Profesores que imparten la materia")
+    section: str | None = Field(description="Sección en la que cursa el periodo")
+    teacher: str | None = Field(
+        description="Profesor de la materia en su sección (null si aún no tiene)"
+    )
     grades: list[TermGrade] = Field(description="Siempre un elemento por lapso, en orden")
     evaluations: list[StudentEvaluation] = Field(
         default_factory=list,
@@ -215,6 +246,8 @@ class GradeChangeRead(BaseModel):
     )
     old_value: GradeNumber | None = Field(description="Nota anterior; null = no tenía nota")
     new_value: GradeNumber | None = Field(description="Nota nueva; null = se borró")
+    old_absent: bool = Field(description="Antes figuraba como inasistente")
+    new_absent: bool = Field(description="Queda como inasistente")
     changed_by: str | None = Field(description="Quién hizo el cambio (null si ya no existe)")
     source: ChangeSource = Field(
         description="manual = en la planilla; import = desde un Excel; evaluations = nota del "
@@ -232,6 +265,8 @@ class GradeChangeRead(BaseModel):
             evaluation_name=change.evaluation_name,
             old_value=change.old_value,
             new_value=change.new_value,
+            old_absent=change.old_absent,
+            new_absent=change.new_absent,
             changed_by=changed_by,
             source=change.source,
             import_job_id=change.import_job_id,

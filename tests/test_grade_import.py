@@ -106,7 +106,7 @@ async def test_previsualizacion_completa(client, course, use_llm, session, sessi
     # Ana ya tiene un 10 en el lapso 1: debe mostrarse como nota actual
     ana = course["students"]["Ana Pérez"]
     await client.put(
-        f"/teacher/subjects/{course['subject_id']}/grades",
+        f"{course['url']}/grades",
         json={"grades": [{"student_id": ana, "term": 1, "value": 10}]},
         headers=course["headers"],
     )
@@ -214,7 +214,7 @@ async def test_confirmar_con_el_endpoint_de_notas(client, course, use_llm, sessi
         if r["status"] != "error"
     ]
     saved = await client.put(
-        f"/teacher/subjects/{course['subject_id']}/grades",
+        f"{course['url']}/grades",
         json={"grades": accepted},
         headers=course["headers"],
     )
@@ -282,7 +282,7 @@ def test_identifica_por_nombre_en_cualquier_orden():
 
 async def test_no_importa_lapsos_con_plan_de_evaluacion(client, course, use_llm, sessionmaker):
     await client.post(
-        f"/teacher/subjects/{course['subject_id']}/evaluations",
+        f"{course['url']}/evaluations",
         json={"term": 2, "name": "Examen", "weight": 100},
         headers=course["headers"],
     )

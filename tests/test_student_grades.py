@@ -18,7 +18,8 @@ async def test_mis_materias(client, campus):
 
     assert [g["value"] for g in mat["grades"]] == [15, 18.5, None]
     assert mat["average"] == 16.75
-    assert mat["teachers"] == ["Laura Profe", "Pedro Profe"]
+    # Un solo profesor: el de su sección (Laura da MAT-101 en la B)
+    assert (mat["section"], mat["teacher"]) == ("A", "Pedro Profe")
     assert mat["subject"]["semester"]["name"] == "2026-I"
 
     assert [g["value"] for g in fis["grades"]] == [10, None, None]
@@ -26,7 +27,7 @@ async def test_mis_materias(client, campus):
 
     assert [g["value"] for g in mat2["grades"]] == [None, None, None]
     assert mat2["average"] is None
-    assert mat2["teachers"] == []
+    assert (mat2["section"], mat2["teacher"]) == ("A", None)
 
     # Promedio general: (16.75 + 10) / 2 = 13.375 -> 13.38 (la materia sin notas no cuenta)
     assert body["average"] == 13.38
@@ -147,7 +148,7 @@ async def test_promedio_y_resultado_por_semestre(client, campus):
             for term, value in values.items()
         ]
         response = await client.put(
-            f"/teacher/subjects/{campus['subjects'][code]['id']}/grades",
+            f"{campus['urls'][code]}/grades",
             json={"grades": entries},
             headers=pedro,
         )

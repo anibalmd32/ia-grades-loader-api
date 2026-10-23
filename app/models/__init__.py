@@ -1,6 +1,6 @@
 """Modelos ORM. Importarlos aquí registra todas las tablas en Base.metadata (Alembic)."""
 
-from app.models.academic import Semester, Subject, TeacherSubject
+from app.models.academic import Section, Semester, StudentSection, Subject, TeacherSubject
 from app.models.biometric_device import BiometricDevice
 from app.models.conversation import ChatChannel, Conversation, ConversationMessage, MessageRole
 from app.models.enrollment import Enrollment, Grade
@@ -36,7 +36,9 @@ __all__ = [
     "PeriodType",
     "RevokedToken",
     "Role",
+    "Section",
     "Semester",
+    "StudentSection",
     "Subject",
     "TeacherSubject",
     "TelegramLinkCode",

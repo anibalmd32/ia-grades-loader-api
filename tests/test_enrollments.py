@@ -2,6 +2,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import Enrollment, Grade, Role
+from tests.conftest import assign_section, create_section
 from tests.factories import names
 
 
@@ -29,7 +30,9 @@ async def data(client, coord):
             headers=coord,
         )
         students[name] = response.json()["user"]["id"]
-    return {"subjects": subjects, "students": students}
+    section = await create_section(client, coord, semester["id"])
+    await assign_section(client, coord, section, list(students.values()))
+    return {"subjects": subjects, "students": students, "semester_id": semester["id"]}
 
 
 async def test_matricula_individual(client, coord, data):
@@ -66,6 +69,29 @@ async def test_matricula_en_lote_por_materia(client, coord, data):
 
     listed = (await client.get(f"/subjects/{mat}/students", headers=coord)).json()
     assert [s["first_name"] for s in listed] == ["Ana", "Bea", "Carlos"]
+
+
+async def test_sin_seccion_no_se_matricula(client, coord, data):
+    mat = data["subjects"]["MAT-101"]
+    dani = await client.post(
+        "/students", json={**names("Dani"), "nationality": "V", "cedula": 4}, headers=coord
+    )
+    dani_id = dani.json()["user"]["id"]
+    ids = [data["students"]["Ana"], dani_id]
+
+    response = await client.post(
+        f"/subjects/{mat}/students", json={"student_ids": ids}, headers=coord
+    )
+    assert response.status_code == 409
+    assert "Dani Test (2026-I)" in response.json()["detail"]
+    # Todo o nada: Ana tampoco queda matriculada
+    assert (await client.get(f"/subjects/{mat}/students", headers=coord)).json() == []
+
+    # Con sección ya se puede
+    section = await create_section(client, coord, data["semester_id"], "B")
+    await assign_section(client, coord, section, [dani_id])
+    ok = await client.post(f"/subjects/{mat}/students", json={"student_ids": ids}, headers=coord)
+    assert ok.json() == {"added": 2, "already_enrolled": 0}
 
 
 async def test_lote_valida_ids(client, coord, data):

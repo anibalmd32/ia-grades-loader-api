@@ -1,9 +1,9 @@
 """Carga masiva de notas desde Excel: la IA extrae, el servidor valida y cruza.
 
 La IA solo lee la planilla. A qué estudiante corresponde cada nota lo decide este módulo
-comparando con los matriculados de la materia, de modo que el modelo no puede asignar notas
-a quien no corresponde. Nada se guarda aquí: el profesor revisa la previsualización y la
-confirma con el endpoint normal de carga de notas.
+comparando con los matriculados de la materia en la sección del profesor, de modo que el
+modelo no puede asignar notas a quien no corresponde. Nada se guarda aquí: el profesor revisa
+la previsualización y la confirma con el endpoint normal de carga de notas.
 """
 
 import asyncio
@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.client import LLMClient
 from app.ai.prompts import grades_extraction_system, grades_extraction_user
-from app.models import Subject, User
-from app.schemas.academic import SubjectRead
+from app.models import Section, Subject, User
+from app.schemas.academic import SectionRead, SubjectRead
 from app.schemas.grades import ImportPreview, ImportRow, ImportSummary, StudentSummary
 from app.services import evaluations, excel, grades
 from app.services import rules as rules_service
@@ -57,7 +57,9 @@ class PreviewRow:
     student: User | None = None
     term: int | None = None
     value: Decimal | None = None
+    absent: bool = False
     current_value: Decimal | None = None
+    current_absent: bool = False
     issues: list[str] = field(default_factory=list)
     status: Status = "ok"
 
@@ -107,6 +109,24 @@ def parse_term(raw: int | str | None, rules: GradingRules) -> int | None:
     return term if rules.term_error(term) is None else None
 
 
+# Lo que las planillas suelen poner a quien no se presentó (normalizado)
+ABSENT_MARKS = {
+    "i",
+    "inasistente",
+    "inasistencia",
+    "inas",
+    "np",
+    "n p",
+    "no presento",
+    "no se presento",
+    "ausente",
+}
+
+
+def is_absent_mark(raw: float | int | str | None) -> bool:
+    return isinstance(raw, str) and normalize_name(raw) in ABSENT_MARKS
+
+
 def parse_value(raw: float | int | str | None, rules: GradingRules) -> tuple[Decimal | None, bool]:
     """Convierte la nota a Decimal (acepta 15, "15,5", 15.75...).
 
@@ -147,9 +167,9 @@ class _Roster:
                 if student not in students:
                     students.append(student)
 
-    def current_value(self, student: User, term: int) -> int | None:
+    def current_value(self, student: User, term: int) -> tuple[Decimal | None, bool]:
         row = next(r for r in self.rows if r.student.id == student.id)
-        return row.grades.get(term)
+        return row.grades.get(term), term in row.absent
 
     def match(self, row: PreviewRow) -> None:
         cedula = parse_cedula(row.extracted.cedula)
@@ -167,7 +187,11 @@ class _Roster:
                 types = " o ".join(sorted({s.nationality for s in candidates}))
                 row.flag("error", f"La cédula {number} es ambigua: indica si es {types}")
                 return
-            row.flag("error", f"La cédula {row.extracted.cedula} no está matriculada en la materia")
+            row.flag(
+                "error",
+                f"La cédula {row.extracted.cedula} no está matriculada en la materia en esta "
+                "sección",
+            )
             return
 
         if row.extracted.student_name:
@@ -188,7 +212,10 @@ class _Roster:
             if len(candidates) > 1:
                 row.flag("error", f"El nombre «{row.extracted.student_name}» coincide con varios")
                 return
-            row.flag("error", f"«{row.extracted.student_name}» no está matriculado en la materia")
+            row.flag(
+                "error",
+                f"«{row.extracted.student_name}» no está matriculado en la materia en esta sección",
+            )
             return
 
         row.flag("error", "No se pudo identificar al estudiante (falta cédula y nombre)")
@@ -204,8 +231,13 @@ def _validate(row: PreviewRow, roster: _Roster, rules: GradingRules) -> None:
             f"No se pudo determinar el {rules.term_label.lower()} (1 a {rules.terms_count})",
         )
 
-    row.value, rounded = parse_value(row.extracted.value, rules)
-    if row.value is None:
+    # "I", "NP"... = no se presentó: se importa como inasistente (sin nota)
+    row.absent = is_absent_mark(row.extracted.value)
+    if not row.absent:
+        row.value, rounded = parse_value(row.extracted.value, rules)
+    if row.absent:
+        row.issues.append("Inasistente: cuenta con la nota mínima")
+    elif row.value is None:
         row.flag(
             "error",
             f"Nota inválida «{row.extracted.value}»: debe ser un número {rules.scale_text}",
@@ -217,7 +249,7 @@ def _validate(row: PreviewRow, roster: _Roster, rules: GradingRules) -> None:
             f"({rules.grade_decimals} decimales como máximo)",
         )
 
-    if row.term in roster.computed_terms:
+    if row.term in roster.computed_terms and not row.absent:
         row.flag(
             "error",
             f"La nota del {rules.term_name(row.term).lower()} se calcula con su plan de "
@@ -228,7 +260,7 @@ def _validate(row: PreviewRow, roster: _Roster, rules: GradingRules) -> None:
         row.issues.append(f"Observación de la IA: {row.extracted.note}")
 
     if row.student and row.term:
-        row.current_value = roster.current_value(row.student, row.term)
+        row.current_value, row.current_absent = roster.current_value(row.student, row.term)
 
 
 def _flag_duplicates(rows: list[PreviewRow], rules: GradingRules) -> None:
@@ -251,6 +283,7 @@ async def preview_import(
     db: AsyncSession,
     llm: LLMClient,
     subject: Subject,
+    section: Section,
     content: bytes,
     default_term: int | None,
 ) -> Preview:
@@ -265,8 +298,8 @@ async def preview_import(
         Extraction,
     )
 
-    roster = _Roster(await grades.subject_roster(db, subject.id, rules))
-    roster.computed_terms = await evaluations.computed_terms(db, subject.id)
+    roster = _Roster(await grades.subject_roster(db, subject.id, section.id, rules))
+    roster.computed_terms = await evaluations.computed_terms(db, subject.id, section.id)
     rows = []
     for extracted in extraction.grades:
         if extracted.term is None and default_term:
@@ -281,7 +314,7 @@ async def preview_import(
     return Preview(rows=rows, warnings=extraction.warnings, students_without_grades=missing)
 
 
-def to_schema(subject: Subject, preview: Preview) -> ImportPreview:
+def to_schema(subject: Subject, section: Section, preview: Preview) -> ImportPreview:
     rows = [
         ImportRow(
             sheet=r.extracted.sheet,
@@ -292,7 +325,9 @@ def to_schema(subject: Subject, preview: Preview) -> ImportPreview:
             student=StudentSummary.model_validate(r.student) if r.student else None,
             term=r.term,
             value=r.value,
+            absent=r.absent,
             current_value=r.current_value,
+            current_absent=r.current_absent,
             status=r.status,
             issues=r.issues,
         )
@@ -300,6 +335,7 @@ def to_schema(subject: Subject, preview: Preview) -> ImportPreview:
     ]
     return ImportPreview(
         subject=SubjectRead.model_validate(subject),
+        section=SectionRead.model_validate(section),
         rows=rows,
         summary=ImportSummary(
             **{s: sum(r.status == s for r in rows) for s in ("ok", "warning", "error")}

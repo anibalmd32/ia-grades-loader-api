@@ -227,11 +227,44 @@ def login_as(create_user):
     return _login
 
 
+async def assign_teacher(client, coord, teacher_id: int, pairs: list[tuple[int, int]]):
+    """Asigna al profesor las (materia, sección) indicadas (reemplaza las que tuviera)."""
+    response = await client.put(
+        f"/teachers/{teacher_id}/subjects",
+        json={"assignments": [{"subject_id": s, "section_id": sec} for s, sec in pairs]},
+        headers=coord,
+    )
+    assert response.status_code == 200, response.text
+    return response
+
+
+async def create_section(client, coord, semester_id: int, name: str = "A") -> int:
+    response = await client.post(
+        f"/semesters/{semester_id}/sections", json={"name": name}, headers=coord
+    )
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
+
+
+async def assign_section(client, coord, section_id: int, student_ids: list[int]) -> None:
+    response = await client.post(
+        f"/sections/{section_id}/students", json={"student_ids": student_ids}, headers=coord
+    )
+    assert response.status_code == 200, response.text
+
+
+def class_url(subject_id: int, section_id: int) -> str:
+    """Raíz de los endpoints del profesor para una materia en una sección."""
+    return f"/teacher/subjects/{subject_id}/sections/{section_id}"
+
+
 @pytest.fixture
 async def course(client, login_as, session):
-    """Materia MAT-101 con un profesor asignado y 4 estudiantes (V-1, V-2, E-2, V-3)."""
+    """Materia MAT-101 con un profesor asignado en la sección A y 4 estudiantes de esa
+    sección (V-1, V-2, E-2, V-3)."""
     coord = await login_as(Role.COORDINATOR, email="coord@uni.edu")
     semester = (await client.post("/semesters", json={"name": "2026-I"}, headers=coord)).json()
+    section_id = await create_section(client, coord, semester["id"])
     subject = await client.post(
         "/subjects",
         json={"semester_id": semester["id"], "code": "MAT-101", "name": "Matemática I"},
@@ -242,9 +275,7 @@ async def course(client, login_as, session):
         "/teachers", json={**names("Pedro"), "email": "p@uni.edu"}, headers=coord
     )
     teacher_id = teacher.json()["user"]["id"]
-    await client.put(
-        f"/teachers/{teacher_id}/subjects", json={"subject_ids": [subject_id]}, headers=coord
-    )
+    await assign_teacher(client, coord, teacher_id, [(subject_id, section_id)])
     students = {}
     for nationality, cedula, name in [
         ("V", 1, "Ana Pérez"),
@@ -258,6 +289,7 @@ async def course(client, login_as, session):
             headers=coord,
         )
         students[name] = response.json()["user"]["id"]
+    await assign_section(client, coord, section_id, list(students.values()))
     await client.post(
         f"/subjects/{subject_id}/students",
         json={"student_ids": list(students.values())},
@@ -266,6 +298,9 @@ async def course(client, login_as, session):
     token = await active_token(session, teacher_id)
     return {
         "subject_id": subject_id,
+        "section_id": section_id,
+        "semester_id": semester["id"],
+        "url": class_url(subject_id, section_id),
         "students": students,
         "headers": {"Authorization": f"Bearer {token}"},
     }
@@ -273,7 +308,10 @@ async def course(client, login_as, session):
 
 @pytest.fixture
 async def campus(client, login_as, session):
-    """Dos semestres, tres materias, dos profesores; Ana cursa tres materias, Beto una."""
+    """Dos semestres, tres materias, dos profesores; Ana cursa tres materias, Beto una.
+
+    Ana y Beto cursan en la sección A de cada semestre. Pedro da MAT-101 y FIS-101 en la A;
+    Laura da MAT-101 en la B (sin estudiantes): cada materia, un profesor por sección."""
     coord = await login_as(Role.COORDINATOR, email="coord@uni.edu")
 
     async def post(url, payload):
@@ -286,19 +324,25 @@ async def campus(client, login_as, session):
     mat = await post("/subjects", {"semester_id": s1["id"], "code": "MAT-101", "name": "Mate I"})
     fis = await post("/subjects", {"semester_id": s1["id"], "code": "FIS-101", "name": "Física"})
     mat2 = await post("/subjects", {"semester_id": s2["id"], "code": "MAT-201", "name": "Mate II"})
+    sections = {
+        "2026-I": await create_section(client, coord, s1["id"]),
+        "2026-I B": await create_section(client, coord, s1["id"], "B"),
+        "2026-II": await create_section(client, coord, s2["id"]),
+    }
+    a1 = sections["2026-I"]
 
     teachers = {}
-    for name, email, subjects in [
-        ("Pedro Profe", "p@uni.edu", [mat["id"], fis["id"]]),
-        ("Laura Profe", "l@uni.edu", [mat["id"]]),
+    teacher_ids = {}
+    for name, email, pairs in [
+        ("Pedro Profe", "p@uni.edu", [(mat["id"], a1), (fis["id"], a1)]),
+        ("Laura Profe", "l@uni.edu", [(mat["id"], sections["2026-I B"])]),
     ]:
         teacher = await post("/teachers", {**names(name), "email": email})
         teacher_id = teacher["user"]["id"]
-        await client.put(
-            f"/teachers/{teacher_id}/subjects", json={"subject_ids": subjects}, headers=coord
-        )
+        await assign_teacher(client, coord, teacher_id, pairs)
         token = await active_token(session, teacher_id)
         teachers[name] = {"Authorization": f"Bearer {token}"}
+        teacher_ids[name] = teacher_id
 
     students = {}
     for name, cedula, subjects in [
@@ -307,6 +351,9 @@ async def campus(client, login_as, session):
     ]:
         created = await post("/students", {**names(name), "nationality": "V", "cedula": cedula})
         student_id = created["user"]["id"]
+        await assign_section(client, coord, a1, [student_id])
+        if mat2["id"] in subjects:
+            await assign_section(client, coord, sections["2026-II"], [student_id])
         await post(f"/students/{student_id}/subjects", {"subject_ids": subjects})
         token = await active_token(session, student_id)
         students[name] = {"id": student_id, "headers": {"Authorization": f"Bearer {token}"}}
@@ -314,7 +361,7 @@ async def campus(client, login_as, session):
     async def grade(teacher, subject, student, term, value):
         entry = {"student_id": students[student]["id"], "term": term, "value": value}
         response = await client.put(
-            f"/teacher/subjects/{subject['id']}/grades",
+            f"{class_url(subject['id'], a1)}/grades",
             json={"grades": [entry]},
             headers=teachers[teacher],
         )
@@ -327,5 +374,14 @@ async def campus(client, login_as, session):
     return {
         "students": students,
         "teachers": teachers,
+        "teacher_ids": teacher_ids,
+        "sections": sections,
         "subjects": {"MAT-101": mat, "FIS-101": fis, "MAT-201": mat2},
+        # Endpoints del profesor de cada materia en la sección A de su semestre
+        "urls": {
+            "MAT-101": class_url(mat["id"], a1),
+            "FIS-101": class_url(fis["id"], a1),
+            "MAT-201": class_url(mat2["id"], sections["2026-II"]),
+        },
+        "coord": coord,
     }

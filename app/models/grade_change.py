@@ -2,7 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 from enum import StrEnum
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Index, Numeric, SmallInteger, String
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Index, Numeric, SmallInteger, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -32,6 +32,9 @@ class GradeChange(Base):
     # null en old_value = nota nueva; null en new_value = nota borrada
     old_value: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
     new_value: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    # Inasistente antes / después del cambio (su valor es la nota mínima de la escala)
+    old_absent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
+    new_absent: Mapped[bool] = mapped_column(Boolean, default=False, server_default="0")
     changed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     source: Mapped[ChangeSource] = mapped_column(
         Enum(

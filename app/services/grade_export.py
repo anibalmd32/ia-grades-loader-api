@@ -1,8 +1,10 @@
 """Descarga de notas en Excel (.xlsx) para el profesor.
 
-- Materia completa: hoja «Planilla» con la nota de cada lapso, el promedio, la definitiva y
-  la situación, y una hoja más por cada lapso con plan de evaluación.
+- Materia completa (en una sección): hoja «Planilla» con la nota de cada lapso, el
+  promedio, la definitiva y la situación, y una hoja más por cada lapso con plan de evaluación.
 - Un lapso: sus evaluaciones (con porcentaje), lo acumulado y la nota del lapso.
+
+Las inasistencias se escriben como «Inasistente» (cuentan con la nota mínima).
 
 Todos los números salen de los mismos cálculos que la API (GradingRules y
 services.evaluations), así que el Excel coincide con lo que se ve en la app.
@@ -19,7 +21,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.worksheet import Worksheet
 
-from app.models import Evaluation, Subject
+from app.models import Evaluation, Section, Subject
 from app.services.evaluations import EvaluationRow
 from app.services.grades import StudentRow
 from app.services.rules import GradingRules, fmt
@@ -30,14 +32,21 @@ _HEADER_FILL = PatternFill("solid", fgColor="DCEBFA")
 _TABLE_START = 4  # fila de los encabezados (las anteriores: título y reglas)
 # Excel no admite estos caracteres en el nombre de una hoja y lo limita a 31
 _SHEET_FORBIDDEN = re.compile(r"[\[\]:*?/\\]")
+ABSENT = "Inasistente"
 
 
 def _number_format(rules: GradingRules) -> str:
     return "0" if rules.grade_decimals == 0 else "0." + "0" * rules.grade_decimals
 
 
-def _value(value: Decimal | None) -> float | None:
+def _value(value: Decimal | None, absent: bool = False) -> float | str | None:
+    if absent:
+        return ABSENT
     return None if value is None else float(value)
+
+
+def _absent_text(rules: GradingRules) -> str:
+    return f"«{ABSENT}» = no se presentó: cuenta como {fmt(rules.min_grade)}."
 
 
 def _standing(row: StudentRow) -> str:
@@ -108,8 +117,11 @@ def _person_headers(document_label: str) -> list[str]:
     return [document_label, "Apellido", "Nombre"]
 
 
-def _heading(subject: Subject, rules: GradingRules) -> str:
-    return f"{subject.code} · {subject.name} — {rules.period_label} {subject.semester.name}"
+def _heading(subject: Subject, section: Section, rules: GradingRules) -> str:
+    return (
+        f"{subject.code} · {subject.name} — Sección {section.name} — "
+        f"{rules.period_label} {subject.semester.name}"
+    )
 
 
 def _generated() -> str:
@@ -119,6 +131,7 @@ def _generated() -> str:
 def _term_sheet(
     sheet: Worksheet,
     subject: Subject,
+    section: Section,
     rules: GradingRules,
     term: int,
     plan: list[Evaluation],
@@ -135,17 +148,17 @@ def _term_sheet(
     ]
     _write_table(
         sheet,
-        f"{_heading(subject, rules)} · {term_name}",
+        f"{_heading(subject, section, rules)} · {term_name}",
         f"Plan de evaluación al {fmt(total)} %. La nota del {term_name.lower()} es la suma de "
         f"cada nota por su porcentaje y solo aparece con el plan al 100 % y todo calificado. "
-        f"Notas {rules.scale_text}. Generado el {_generated()}.",
+        f"Notas {rules.scale_text}. {_absent_text(rules)} Generado el {_generated()}.",
         headers,
         [
             [
                 *_person(row.student),
-                *(_value(row.values.get(e.id)) for e in plan),
+                *(_value(row.values.get(e.id), e.id in row.absent) for e in plan),
                 _value(row.accumulated),
-                _value(row.term_grade),
+                _value(row.term_grade, row.term_absent),
             ]
             for row in rows
         ],
@@ -162,6 +175,7 @@ def _save(workbook: Workbook) -> bytes:
 
 def subject_workbook(
     subject: Subject,
+    section: Section,
     rules: GradingRules,
     roster: list[StudentRow],
     term_plans: dict[int, tuple[list[Evaluation], list[EvaluationRow]]],
@@ -180,13 +194,14 @@ def subject_workbook(
     ]
     _write_table(
         sheet,
-        _heading(subject, rules),
-        f"{rules.final_grade_text}. Notas {rules.scale_text}. Generado el {_generated()}.",
+        _heading(subject, section, rules),
+        f"{rules.final_grade_text}. Notas {rules.scale_text}. {_absent_text(rules)} "
+        f"Generado el {_generated()}.",
         headers,
         [
             [
                 *_person(row.student),
-                *(_value(row.grades.get(t)) for t in rules.terms),
+                *(_value(row.grades.get(t), t in row.absent) for t in rules.terms),
                 _value(row.average),
                 _value(row.final_grade),
                 _standing(row),
@@ -200,6 +215,7 @@ def subject_workbook(
         _term_sheet(
             workbook.create_sheet(_sheet_title(rules.term_name(term))),
             subject,
+            section,
             rules,
             term,
             plan,
@@ -211,6 +227,7 @@ def subject_workbook(
 
 def term_workbook(
     subject: Subject,
+    section: Section,
     rules: GradingRules,
     term: int,
     plan: list[Evaluation],
@@ -221,7 +238,7 @@ def term_workbook(
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = _sheet_title(rules.term_name(term))
-    _term_sheet(sheet, subject, rules, term, plan, rows, document_label)
+    _term_sheet(sheet, subject, section, rules, term, plan, rows, document_label)
     return _save(workbook)
 
 
@@ -230,9 +247,11 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", ascii_text).strip("-").lower() or "notas"
 
 
-def file_name(subject: Subject, rules: GradingRules, term: int | None = None) -> str:
-    """notas-mat-102-2026-i.xlsx o notas-mat-102-2026-i-lapso-1.xlsx"""
-    parts = [subject.code, subject.semester.name]
+def file_name(
+    subject: Subject, section: Section, rules: GradingRules, term: int | None = None
+) -> str:
+    """notas-mat-102-2026-i-seccion-a.xlsx o notas-mat-102-2026-i-seccion-a-lapso-1.xlsx"""
+    parts = [subject.code, subject.semester.name, f"sección {section.name}"]
     if term is not None:
         parts.append(rules.term_name(term))
     return f"notas-{_slug(' '.join(parts))}.xlsx"

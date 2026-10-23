@@ -17,7 +17,7 @@ MAX_BODY = 500
 def _describe(update: GradeUpdate, rules: GradingRules) -> str:
     term = rules.term_name(update.term)
     where = term if update.evaluation_name is None else f"{update.evaluation_name} ({term})"
-    return f"{where}: {fmt(update.value)}"
+    return f"{where}: {'inasistente' if update.absent else fmt(update.value)}"
 
 
 async def notify_grade_updates(

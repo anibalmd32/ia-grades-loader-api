@@ -49,6 +49,8 @@ class ImportJob(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True, default=lambda: uuid.uuid4().hex)
     teacher_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     subject_id: Mapped[int] = mapped_column(ForeignKey("subjects.id", ondelete="CASCADE"))
+    # Sección del profesor: la importación solo ve a los estudiantes de esa sección
+    section_id: Mapped[int] = mapped_column(ForeignKey("sections.id", ondelete="CASCADE"))
     status: Mapped[JobStatus] = mapped_column(
         Enum(JobStatus, name="import_job_status", values_callable=lambda e: [s.value for s in e]),
         default=JobStatus.PENDING,

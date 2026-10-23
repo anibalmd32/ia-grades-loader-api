@@ -33,17 +33,25 @@ async def test_plantilla(client, coord):
     response = await client.get("/students/import/template", headers=coord)
     assert response.status_code == 200
     sheet = load_workbook(io.BytesIO(response.content)).active
-    assert [c.value for c in sheet[1]] == ["Nombre", "Apellido", "Tipo", "Cédula", "Materias"]
+    assert [c.value for c in sheet[1]] == [
+        "Nombre",
+        "Apellido",
+        "Tipo",
+        "Cédula",
+        "Materias",
+        "Sección",
+    ]
 
 
 async def test_validar_y_confirmar(client, coord, campus):
     content = xlsx(
         [
             ["Listado de estudiantes 2026"],
-            ["Nombres", "Apellidos", "Tipo", "C.I.", "Materias"],
-            ["Luis", "Gómez", "V", "V-20.111.222", "MAT-101, fis-101"],
+            ["Nombres", "Apellidos", "Tipo", "C.I.", "Materias", "Sección"],
+            ["Luis", "Gómez", "V", "V-20.111.222", "MAT-101, fis-101", "a"],
             ["Mary", "Smith", "E", "81234567", ""],
-            ["Ana", "Repetida", "V", "1", "MAT-201"],  # ya existe (Ana del campus)
+            # ya existe (Ana del campus) y ya tiene sección en 2026-II
+            ["Ana", "Repetida", "V", "1", "MAT-201"],
             ["Sin", "Cedula", "V", "", ""],
             ["Otra", "Vez", "V", "20111222", ""],  # repetida en el archivo
             ["Pepe", "", "V", "333", "QUI-999"],  # sin apellido y materia inexistente
@@ -57,6 +65,7 @@ async def test_validar_y_confirmar(client, coord, campus):
     luis = body["rows"][0]
     assert (luis["row"], luis["nationality"], luis["cedula"]) == (3, "V", 20111222)
     assert luis["subject_codes"] == ["FIS-101", "MAT-101"]
+    assert luis["section"] == "A"
     assert luis["generated_password"] is None
     errors = {r["row"]: r["issues"] for r in body["rows"] if r["status"] == "error"}
     assert errors[6] == ["Falta la cédula"]
@@ -76,6 +85,8 @@ async def test_validar_y_confirmar(client, coord, campus):
     luis_id = created[0]["user"]["id"]
     subjects = (await client.get(f"/students/{luis_id}/subjects", headers=coord)).json()
     assert sorted(s["code"] for s in subjects) == ["FIS-101", "MAT-101"]
+    sections = (await client.get(f"/students/{luis_id}/sections", headers=coord)).json()
+    assert [(s["semester"]["name"], s["name"]) for s in sections] == [("2026-I", "A")]
     ana = campus["students"]["Ana"]["id"]
     ana_subjects = (await client.get(f"/students/{ana}/subjects", headers=coord)).json()
     assert len(ana_subjects) == 3  # MAT-201 ya la tenía: no se duplica
@@ -86,6 +97,26 @@ async def test_validar_y_confirmar(client, coord, campus):
         json={"nationality": "V", "cedula": 20111222, "password": created[0]["generated_password"]},
     )
     assert login.status_code == 200
+
+
+async def test_seccion_necesaria_para_matricular(client, coord, campus):
+    content = xlsx(
+        [
+            ["Nombre", "Apellido", "Cédula", "Materias", "Sección"],
+            ["Luis", "Gómez", "9", "MAT-101", ""],
+            ["Mary", "Smith", "10", "MAT-101", "Z"],
+            ["Ana", "Otra", "1", "MAT-101", "B"],  # Ana ya está en la A de 2026-I
+        ]
+    )
+    rows = (await upload(client, coord, content, dry_run=True)).json()["rows"]
+    assert [r["issues"] for r in rows] == [
+        ["Falta la sección (columna Sección) para matricularlo en 2026-I"],
+        ["La sección Z no existe en 2026-I"],
+        [
+            "Ya existe: no se crea, solo se matricula en las materias",
+            "Ya está en la sección A de 2026-I",
+        ],
+    ]
 
 
 async def test_columna_de_nombre_completo(client, coord):

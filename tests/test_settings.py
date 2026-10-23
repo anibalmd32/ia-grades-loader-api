@@ -119,7 +119,7 @@ async def test_configuracion_invalida(client, admin, changes, message):
 async def test_no_se_reducen_lapsos_con_notas_en_los_ultimos(client, admin, course):
     ana = course["students"]["Ana Pérez"]
     await client.put(
-        f"/teacher/subjects/{course['subject_id']}/grades",
+        f"{course['url']}/grades",
         json={"grades": [{"student_id": ana, "term": 3, "value": 15}]},
         headers=course["headers"],
     )
@@ -133,7 +133,7 @@ async def test_no_se_reducen_lapsos_con_notas_en_los_ultimos(client, admin, cour
 async def test_no_se_cambia_la_escala_dejando_notas_fuera(client, admin, course):
     ana = course["students"]["Ana Pérez"]
     await client.put(
-        f"/teacher/subjects/{course['subject_id']}/grades",
+        f"{course['url']}/grades",
         json={"grades": [{"student_id": ana, "term": 1, "value": 15.5}]},
         headers=course["headers"],
     )
@@ -152,7 +152,7 @@ async def test_no_se_cambia_la_escala_dejando_notas_fuera(client, admin, course)
 
 
 async def test_la_carga_respeta_la_configuracion(client, admin, course):
-    url = f"/teacher/subjects/{course['subject_id']}/grades"
+    url = f"{course['url']}/grades"
     ana = course["students"]["Ana Pérez"]
 
     async def put(term, value):
@@ -184,10 +184,9 @@ async def test_la_carga_respeta_la_configuracion(client, admin, course):
 async def test_definitiva_ponderada_y_redondeada_para_profesor_y_estudiante(client, admin, campus):
     await put_settings(client, admin, term_weights=[20, 30, 50], round_final_grade=True)
     ana = campus["students"]["Ana"]
-    mat = campus["subjects"]["MAT-101"]
     # MAT-101 de Ana: 15 y 18.5 -> se completa con 3 en el último lapso (50 %)
     response = await client.put(
-        f"/teacher/subjects/{mat['id']}/grades",
+        f"{campus['urls']['MAT-101']}/grades",
         json={"grades": [{"student_id": ana["id"], "term": 3, "value": 3}]},
         headers=campus["teachers"]["Pedro Profe"],
     )

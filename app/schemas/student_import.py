@@ -12,6 +12,10 @@ class StudentImportRow(BaseModel):
     nationality: str | None
     cedula: int | None
     subject_codes: list[str] = Field(description="Materias en las que se matricula")
+    section: str | None = Field(
+        default=None,
+        description="Sección que se le asigna en el periodo de sus materias (si aún no tenía)",
+    )
     status: Literal["new", "existing", "error"] = Field(
         description="new = se crea; existing = ya existe y solo se matricula; error = se omite"
     )

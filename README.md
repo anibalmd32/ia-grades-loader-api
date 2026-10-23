@@ -2,12 +2,22 @@
 
 API para la carga y consulta de notas universitarias asistida por IA.
 
-- Los profesores cargan las notas (una por lapso), manualmente o desde un Excel que un modelo de
-  IA interpreta. Cada lapso puede tener además un **plan de evaluación** que define el profesor
-  (exámenes, talleres... con su porcentaje): entonces la nota del lapso se calcula sola a partir
-  de las notas de esas evaluaciones (`/api/v1/teacher/subjects/{id}/evaluations`). Las notas
-  se descargan en Excel: la materia completa (`.../grades/export`) o un lapso con sus
-  evaluaciones (`.../terms/{lapso}/evaluation-grades/export`).
+- Cada periodo tiene **secciones** (A, B...). Cada estudiante cursa el periodo en una sola
+  sección (hay que asignársela antes de matricularlo: `POST /api/v1/sections/{id}/students`) y
+  cada materia tiene **un solo profesor por sección** (`PUT /api/v1/teachers/{id}/subjects` con
+  pares materia-sección; 409 si otro ya la imparte en esa sección). Así un estudiante nunca
+  tiene dos profesores en la misma materia.
+- Los profesores cargan las notas de los estudiantes de su sección (una por lapso), manualmente o
+  desde un Excel que un modelo de IA interpreta
+  (`/api/v1/teacher/subjects/{id}/sections/{section_id}/...`). Cada lapso puede tener además un
+  **plan de evaluación** propio de la sección (exámenes, talleres... con su porcentaje): entonces
+  la nota del lapso se calcula sola a partir de las notas de esas evaluaciones
+  (`.../evaluations`). Las notas se descargan en Excel: la materia completa
+  (`.../grades/export`) o un lapso con sus evaluaciones
+  (`.../terms/{lapso}/evaluation-grades/export`).
+- Un estudiante que no se presenta se marca como **inasistente** (`absent: true`), en una
+  evaluación o en todo un lapso: cuenta con la nota mínima de la escala. En la importación de
+  Excel, las celdas «I», «NP», «Inasistente»... se leen como inasistencias.
 - El super admin configura las reglas académicas: tipo de periodo (semestres, trimestres,
   cuatrimestres o años), número de lapsos y su nombre ("Lapso", "Corte"...), peso de cada lapso,
   escala de notas, nota aprobatoria, decimales y redondeo de la definitiva
@@ -210,10 +220,11 @@ admin con la contraseña de demostración) por accidente.
 Sobre una base **vacía** (recién creada o reiniciada) carga una universidad de ejemplo completa
 para enseñar todas las pantallas al instante: configuración académica, super admin,
 2 coordinadores, 6 profesores, 32 estudiantes (V y E, uno desactivado y dos con la contraseña
-inicial), dos semestres (uno cerrado y otro en curso), asignaciones, matrículas, ~700 notas con
-todas las situaciones (aprobada, reprobada, asegurada, en curso e imposible), importaciones de
-Excel (confirmada, pendiente de revisar y fallida) y conversaciones con el asistente. Los datos
-son siempre los mismos.
+inicial), dos semestres (uno cerrado y otro en curso) con las secciones A y B, asignaciones (un
+profesor por materia y sección: Matemática II la dan dos profesores, cada uno en su sección),
+matrículas, ~700 notas con todas las situaciones (aprobada, reprobada, asegurada, en curso e
+imposible) y algunas inasistencias, importaciones de Excel (confirmada, pendiente de revisar y
+fallida) y conversaciones con el asistente. Los datos son siempre los mismos.
 
 ```bash
 python -m app.seed_db                           # sobre una base vacía

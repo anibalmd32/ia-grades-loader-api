@@ -1,11 +1,14 @@
-"""Matrículas: qué materias cursa cada estudiante."""
+"""Matrículas: qué materias cursa cada estudiante.
+
+Para matricular a un estudiante en una materia debe tener sección en el periodo de la
+materia (app.services.sections): su profesor es el de la materia en esa sección."""
 
 from sqlalchemy import exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
 from app.models import Enrollment, Grade, Role, Subject, User
-from app.services import academic, users
+from app.services import academic, sections, users
 from app.services.assignments import ensure_subjects_exist
 
 
@@ -24,8 +27,10 @@ async def _enroll_pairs(db: AsyncSession, pairs: set[tuple[int, int]]) -> tuple[
     """
     student_ids = {s for s, _ in pairs}
     subject_ids = {m for _, m in pairs}
+    semester_of = {}
     for subject in await db.scalars(select(Subject).where(Subject.id.in_(subject_ids))):
         await academic.ensure_open(db, subject.semester)
+        semester_of[subject.id] = subject.semester_id
     rows = await db.execute(
         select(Enrollment.student_id, Enrollment.subject_id).where(
             Enrollment.student_id.in_(student_ids),
@@ -34,6 +39,7 @@ async def _enroll_pairs(db: AsyncSession, pairs: set[tuple[int, int]]) -> tuple[
     )
     existing = {(s, m) for s, m in rows}
     new = pairs - existing
+    await sections.ensure_assigned(db, {(s, semester_of[m]) for s, m in new})
     db.add_all(Enrollment(student_id=s, subject_id=m) for s, m in new)
     await db.commit()
     return len(new), len(pairs & existing)

@@ -46,8 +46,8 @@ Reglas:
 - No inventes datos. Si una celda de nota está vacía, no generes entrada para ella.
 - Copia la cédula y el nombre exactamente como aparecen (sin corregirlos). Si nombre y apellido
   están en columnas separadas, únelos en "student_name".
-- Copia la nota tal cual aparece, sin redondear. Si no es un número (p. ej. "NP", "I"), cópiala
-  como texto.
+- Copia la nota tal cual aparece, sin redondear. Si no es un número (p. ej. "NP", "I",
+  "Inasistente"), cópiala como texto: así se marcan los estudiantes que no se presentaron.
 - Ignora encabezados, totales, promedios, notas definitivas, porcentajes y filas sin estudiante.
 - Si no puedes saber a qué {rules.term_label.lower()} corresponde una nota, usa term = null y \
 explícalo en "note" (en español).
@@ -107,6 +107,10 @@ Reglas académicas:
   evaluación: entonces su nota es la suma de cada nota por su porcentaje y solo aparece cuando
   el plan suma 100 % y todas las evaluaciones tienen nota. Mientras tanto puedes decirle cuánto
   lleva acumulado (ya calculado) y qué evaluaciones le faltan.
+- Una nota "inasistente" significa que no se presentó a esa evaluación o {term}: cuenta como la
+  nota mínima ({fmt(rules.min_grade)}) en sus cálculos. Díselo con tacto.
+- Cada materia tiene UN solo profesor: el de la sección en la que cursa. Nunca digas que tiene
+  varios profesores en una materia; si no tiene profesor asignado, dilo así.
 
 Cómo responder:
 - Consulta siempre sus notas reales antes de responder; no inventes notas ni datos.

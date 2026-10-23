@@ -2,7 +2,7 @@ from app.models import Role
 
 
 def url(course, path=""):
-    return f"/teacher/subjects/{course['subject_id']}{path}"
+    return f"{course['url']}{path}"
 
 
 async def add(client, course, term=1, name="Parcial 1", weight=50, **extra):
@@ -94,8 +94,8 @@ async def test_la_nota_del_lapso_se_calcula_con_las_evaluaciones(client, course)
     sheet = await grade(client, course, 1, [entry(course, "Ana Pérez", parcial, 15)])
     ana = by_name(sheet, "Ana")
     assert ana["grades"] == [
-        {"evaluation_id": parcial["id"], "value": 15},
-        {"evaluation_id": taller["id"], "value": None},
+        {"evaluation_id": parcial["id"], "value": 15, "absent": False},
+        {"evaluation_id": taller["id"], "value": None, "absent": False},
     ]
     assert (ana["accumulated"], ana["term_grade"]) == (6, None)
     assert sheet["evaluations"][0]["graded_count"] == 1
@@ -105,7 +105,7 @@ async def test_la_nota_del_lapso_se_calcula_con_las_evaluaciones(client, course)
     assert by_name(sheet, "Ana")["term_grade"] == 17.1
     book = await gradebook(client, course)
     ana_row = next(s for s in book["students"] if s["student"]["first_name"] == "Ana")
-    assert ana_row["grades"][0] == {"term": 1, "value": 17.1}
+    assert ana_row["grades"][0] == {"term": 1, "value": 17.1, "absent": False}
 
     # Cambiar el porcentaje recalcula; si el plan deja de sumar 100 el lapso queda pendiente
     response = await client.patch(
@@ -278,17 +278,17 @@ async def test_el_estudiante_ve_su_plan_de_evaluacion(client, campus, session):
     pedro = campus["teachers"]["Pedro Profe"]
     ana = campus["students"]["Ana"]
     created = await client.post(
-        f"/teacher/subjects/{mat}/evaluations",
+        f"{campus['urls']['MAT-101']}/evaluations",
         json={"term": 3, "name": "Examen final", "weight": 60, "due_date": "2026-12-01"},
         headers=pedro,
     )
     await client.post(
-        f"/teacher/subjects/{mat}/evaluations",
+        f"{campus['urls']['MAT-101']}/evaluations",
         json={"term": 3, "name": "Proyecto", "weight": 40},
         headers=pedro,
     )
     await client.put(
-        f"/teacher/subjects/{mat}/terms/3/evaluation-grades",
+        f"{campus['urls']['MAT-101']}/terms/3/evaluation-grades",
         json={
             "grades": [
                 {"student_id": ana["id"], "evaluation_id": created.json()["id"], "value": 15}
@@ -299,8 +299,22 @@ async def test_el_estudiante_ve_su_plan_de_evaluacion(client, campus, session):
 
     detail = (await client.get(f"/student/subjects/{mat}", headers=ana["headers"])).json()
     assert detail["evaluations"] == [
-        {"term": 3, "name": "Examen final", "weight": 60, "due_date": "2026-12-01", "value": 15},
-        {"term": 3, "name": "Proyecto", "weight": 40, "due_date": None, "value": None},
+        {
+            "term": 3,
+            "name": "Examen final",
+            "weight": 60,
+            "due_date": "2026-12-01",
+            "value": 15,
+            "absent": False,
+        },
+        {
+            "term": 3,
+            "name": "Proyecto",
+            "weight": 40,
+            "due_date": None,
+            "value": None,
+            "absent": False,
+        },
     ]
     assert detail["grades"][2]["value"] is None
 

@@ -34,7 +34,7 @@ SAMPLE = xlsx([["Cédula", "Nombre", "L1", "L2"], ["V-1", "Ana Pérez", 15, 12]]
 async def upload(client, course, content=SAMPLE, default_term=None, headers=None):
     data = {"default_term": str(default_term)} if default_term else {}
     return await client.post(
-        f"/teacher/subjects/{course['subject_id']}/grades/import",
+        f"{course['url']}/grades/import",
         files={"file": ("notas.xlsx", content)},
         data=data,
         headers=headers or course["headers"],

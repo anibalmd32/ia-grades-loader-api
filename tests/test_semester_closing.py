@@ -42,7 +42,7 @@ async def test_periodo_cerrado_bloquea_notas_importaciones_y_matriculas(client, 
     await client.post(f"/semesters/{mat['semester']['id']}/close", headers=coord)
 
     grades = await client.put(
-        f"/teacher/subjects/{mat['id']}/grades",
+        f"{campus['urls']['MAT-101']}/grades",
         json={"grades": [{"student_id": ana, "term": 3, "value": 12}]},
         headers=teacher,
     )
@@ -50,7 +50,7 @@ async def test_periodo_cerrado_bloquea_notas_importaciones_y_matriculas(client, 
     assert "El semestre 2026-I está cerrado" in grades.json()["detail"]
 
     upload = await client.post(
-        f"/teacher/subjects/{mat['id']}/grades/import",
+        f"{campus['urls']['MAT-101']}/grades/import",
         files={"file": ("n.xlsx", b"PK...", "application/octet-stream")},
         headers=teacher,
     )
@@ -58,7 +58,7 @@ async def test_periodo_cerrado_bloquea_notas_importaciones_y_matriculas(client, 
 
     # Se pueden consultar, no modificar
     assert (
-        await client.get(f"/teacher/subjects/{mat['id']}/grades", headers=teacher)
+        await client.get(f"{campus['urls']['MAT-101']}/grades", headers=teacher)
     ).status_code == 200
     subjects = (await client.get("/teacher/subjects", headers=teacher)).json()
     assert next(s for s in subjects if s["id"] == mat["id"])["semester"]["is_closed"] is True
@@ -83,7 +83,7 @@ async def test_periodo_cerrado_bloquea_notas_importaciones_y_matriculas(client, 
     # Reabierto vuelve a permitirlo
     await client.post(f"/semesters/{mat['semester']['id']}/reopen", headers=coord)
     grades = await client.put(
-        f"/teacher/subjects/{mat['id']}/grades",
+        f"{campus['urls']['MAT-101']}/grades",
         json={"grades": [{"student_id": ana, "term": 3, "value": 12}]},
         headers=teacher,
     )
@@ -131,7 +131,7 @@ async def test_cerrar_congela_las_reglas_y_cambiar_la_configuracion_no_lo_afecta
     assert changed.status_code == 200, changed.text
 
     # El periodo cerrado se sigue viendo con sus reglas; el abierto, con las nuevas
-    old = (await client.get(f"/teacher/subjects/{mat['id']}/grades", headers=teacher)).json()
+    old = (await client.get(f"{campus['urls']['MAT-101']}/grades", headers=teacher)).json()
     assert [g["term"] for g in old["students"][0]["grades"]] == [1, 2, 3]
     student = (await client.get("/student/subjects", headers=ana["headers"])).json()
     terms = {s["subject"]["code"]: len(s["grades"]) for s in student["subjects"]}
@@ -145,7 +145,7 @@ async def test_cerrar_congela_las_reglas_y_cambiar_la_configuracion_no_lo_afecta
 
     # Reabierto conserva sus reglas: valida con 1-20 y 3 lapsos
     await client.post(f"/semesters/{mat['semester']['id']}/reopen", headers=coord)
-    url = f"/teacher/subjects/{mat['id']}/grades"
+    url = f"{campus['urls']['MAT-101']}/grades"
     entry = {"student_id": ana["id"], "term": 3, "value": 50}
     assert (await client.put(url, json={"grades": [entry]}, headers=teacher)).status_code == 422
     entry = {"student_id": ana["id"], "term": 4, "value": 15}
