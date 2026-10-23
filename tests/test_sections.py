@@ -232,3 +232,17 @@ async def test_cada_seccion_tiene_su_plan_de_evaluacion(client, school, session)
         await client.get("/student/subjects", headers={"Authorization": f"Bearer {token}"})
     ).json()
     assert body["subjects"][0]["evaluations"] == []
+
+
+async def test_el_listado_de_materias_trae_el_profesor_de_cada_seccion(client, school):
+    coord, semester = school["coord"], school["semester"]
+    await create_section(client, coord, semester["id"], "C")
+    page = (await client.get(f"/subjects?semester_id={semester['id']}", headers=coord)).json()
+    (mat,) = page["items"]
+    assert [(t["section_name"], t["teacher_name"]) for t in mat["section_teachers"]] == [
+        ("A", "Pedro Profe"),
+        ("B", "Laura Profe"),
+        ("C", None),
+    ]
+    detail = (await client.get(f"/subjects/{mat['id']}", headers=coord)).json()
+    assert detail["section_teachers"] == mat["section_teachers"]

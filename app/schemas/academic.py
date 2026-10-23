@@ -77,6 +77,15 @@ class SubjectUpdate(BaseModel):
     name: Name | None = None
 
 
+class SectionTeacher(BaseModel):
+    """Profesor de la materia en una sección de su periodo (null si aún no tiene)."""
+
+    section_id: int
+    section_name: str
+    teacher_id: int | None
+    teacher_name: str | None
+
+
 class SubjectRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -89,6 +98,11 @@ class SubjectRead(BaseModel):
     )
     students_count: int | None = Field(
         default=None, description="Estudiantes matriculados." + COUNT_NOTE
+    )
+    section_teachers: list[SectionTeacher] | None = Field(
+        default=None,
+        description="Cada sección del periodo con el profesor de la materia en ella (null si "
+        "no tiene)." + COUNT_NOTE,
     )
 
 

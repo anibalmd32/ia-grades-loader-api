@@ -98,6 +98,35 @@ async def set_teacher_subjects(
     return await list_teacher_subjects(db, teacher_id)
 
 
+async def section_teachers(
+    db: AsyncSession, subjects: list[Subject]
+) -> dict[int, list[tuple[Section, User | None]]]:
+    """Para cada materia, todas las secciones de su periodo con su profesor (o None), en
+    una sola consulta para todo el listado."""
+    semester_ids = {s.semester_id for s in subjects}
+    sections = list(
+        await db.scalars(
+            select(Section).where(Section.semester_id.in_(semester_ids)).order_by(Section.name)
+        )
+    )
+    teachers = {
+        (subject_id, section_id): teacher
+        for subject_id, section_id, teacher in await db.execute(
+            select(TeacherSubject.subject_id, TeacherSubject.section_id, User)
+            .join(User, User.id == TeacherSubject.teacher_id)
+            .where(TeacherSubject.subject_id.in_([s.id for s in subjects]))
+        )
+    }
+    return {
+        subject.id: [
+            (section, teachers.get((subject.id, section.id)))
+            for section in sections
+            if section.semester_id == subject.semester_id
+        ]
+        for subject in subjects
+    }
+
+
 async def list_subject_teachers(db: AsyncSession, subject_id: int) -> list[tuple[Section, User]]:
     """Profesor de la materia en cada sección que lo tiene asignado."""
     await academic.get_subject(db, subject_id)
